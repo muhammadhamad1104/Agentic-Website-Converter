@@ -1,0 +1,33 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Frontend
+        run: docker build -t agentic-converter-frontend:latest -f apps/frontend/Dockerfile .
+
+      - name: Build Backend
+        run: docker build -t agentic-converter-backend:latest -f apps/backend/Dockerfile .
+
+      - name: Build Worker
+        run: docker build -t agentic-converter-worker:latest -f apps/worker/Dockerfile .
+
+  # Note: The Terraform and Kubernetes deployment steps are left manual for safety 
+  # to avoid unexpected AWS billing charges on automatic pushes.
+  # Run `scripts/deploy.sh` locally to deploy the infrastructure.
