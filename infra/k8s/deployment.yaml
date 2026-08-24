@@ -151,6 +151,16 @@ spec:
               name: openai-secret
               key: api-key
               optional: true
+        - name: LANGSMITH_TRACING
+          value: "true"
+        - name: LANGSMITH_PROJECT
+          value: "STATIC-TO-DYNAMIC-WEBSITE-CONVERTER"
+        - name: LANGSMITH_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: langsmith-secret
+              key: api-key
+              optional: true
         ports:
         - containerPort: 8000
 ---
