@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+langgraph
+langchain
+langchain-openai
+langchain-google-genai
+langchain-groq
+langchain-anthropic
+openai
+requests
+beautifulsoup4
+psycopg2-binary
+pytest
+httpx
