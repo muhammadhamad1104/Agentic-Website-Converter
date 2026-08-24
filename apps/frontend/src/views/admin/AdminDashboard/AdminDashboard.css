@@ -1,0 +1,15 @@
+.admin-page {
+  min-height: 100vh;
+  padding-top: 5rem;
+  background-color: var(--bg-default);
+}
+
+.admin-main {
+  padding: 2rem 0;
+}
+
+.admin-header {
+  padding: 2rem;
+  border-radius: 24px;
+  margin-bottom: 2rem;
+}
