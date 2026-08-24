@@ -1,0 +1,12 @@
+{
+  "job_id": "dffa65d7-67a0-4fca-8c69-661561e5beee",
+  "package_mode": "runtime-only",
+  "entity_count": 4,
+  "entities": [
+    "users",
+    "sessions",
+    "aboutus",
+    "contactus"
+  ],
+  "required_files": []
+}

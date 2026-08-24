@@ -1,0 +1,1 @@
+import React from 'react'; const Sessions = () => <div>Sessions Page</div>; export default Sessions;
