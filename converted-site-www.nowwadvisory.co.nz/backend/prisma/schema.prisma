@@ -1,0 +1,1 @@
+model Users { id Int @id @default(autoincrement()) name String slug String } model Sessions { id Int @id @default(autoincrement()) name String slug String } model AboutUs { id Int @id @default(autoincrement()) name String slug String } model ContactUs { id Int @id @default(autoincrement()) name String slug String }
