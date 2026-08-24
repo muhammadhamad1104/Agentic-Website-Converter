@@ -7,15 +7,15 @@ echo "======================================"
 
 # 1. Apply Terraform
 echo "1. Initializing and Applying Terraform..."
-cd infra/terraform
+cd infra/terraform-eks
 terraform init
 terraform apply -auto-approve
 cd ../../
 
 # 2. Update Kubeconfig
 echo "2. Updating kubeconfig for EKS..."
-CLUSTER_NAME=$(terraform -chdir=infra/terraform output -raw cluster_name)
-REGION=$(terraform -chdir=infra/terraform output -raw region 2>/dev/null || echo "us-east-1")
+CLUSTER_NAME=$(terraform -chdir=infra/terraform-eks output -raw cluster_name)
+REGION=$(terraform -chdir=infra/terraform-eks output -raw region 2>/dev/null || echo "us-east-1")
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION"
 
 # 3. Apply Kubernetes Manifests
