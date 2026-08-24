@@ -1,0 +1,17 @@
+.scene3d-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  background: radial-gradient(circle at center, var(--bg-default) 0%, #050505 100%);
+  overflow: hidden;
+}
+
+/* We want to make sure canvas takes up the full space */
+.scene3d-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+  outline: none;
+}
