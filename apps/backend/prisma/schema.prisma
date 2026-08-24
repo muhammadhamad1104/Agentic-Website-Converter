@@ -1,0 +1,194 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  name          String
+  email         String   @unique
+  passwordHash  String   @map("password_hash")
+  role          Role     @default(OWNER)
+  plan          String   @default("STARTER")
+  status        Status   @default(ACTIVE)
+  mfaEnabled    Boolean  @default(false) @map("mfa_enabled")
+  mfaSecret     String?  @map("mfa_secret")
+  lastLogin     DateTime? @map("last_login")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  sites         Site[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+enum Role {
+  ADMIN
+  OWNER
+  COLLABORATOR
+}
+
+enum Status {
+  ACTIVE
+  SUSPENDED
+}
+
+model Site {
+  id            String   @id @default(uuid())
+  orgId         String?  @map("org_id")
+  ownerId       String   @map("owner_id")
+  name          String
+  slug          String   @unique
+  sourceType    SourceType @map("source_type")
+  sourceUrl     String   @map("source_url")
+  status        SiteStatus
+  outputStack   String   @default("react+node") @map("output_stack")
+  primaryDomain String?  @map("primary_domain")
+  previewUrl    String?  @map("preview_url")
+  settings      Json?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  owner         User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  crawls        Crawl[]
+  entities      EntityDefinition[]
+  plans         ConversionPlan[]
+
+  @@map("sites")
+}
+
+enum SourceType {
+  URL
+  ZIP
+  REPO
+}
+
+enum SiteStatus {
+  NEW
+  ANALYZING
+  READY
+  BUILDING
+  DEPLOYED
+  FAILED
+}
+
+model Crawl {
+  id              String   @id @default(uuid())
+  siteId          String   @map("site_id")
+  startUrl        String   @map("start_url")
+  maxDepth        Int      @default(3) @map("max_depth")
+  status          String
+  pagesCrawled    Int      @default(0) @map("pages_crawled")
+  assetsDiscovered Int     @default(0) @map("assets_discovered")
+  durationMs      Int?     @map("duration_ms")
+  errors          Json?
+  logRef          String?  @map("log_ref")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  site            Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@map("crawls")
+}
+
+model EntityDefinition {
+  id          String   @id @default(uuid())
+  siteId      String   @map("site_id")
+  name        String
+  slug        String
+  description String?
+  icon        String?
+  isSystem    Boolean  @default(false) @map("is_system")
+  version     Int      @default(1)
+  status      String   @default("draft")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  fields      FieldDefinition[]
+
+  @@map("entity_definitions")
+}
+
+model FieldDefinition {
+  id              String   @id @default(uuid())
+  entityId        String   @map("entity_id")
+  name            String
+  slug            String
+  type            String
+  isRequired      Boolean  @default(false) @map("is_required")
+  isUnique        Boolean  @default(false) @map("is_unique")
+  defaultValue    Json?    @map("default_value")
+  validationRules Json?    @map("validation_rules")
+  displayProps    Json?    @map("display_props")
+  helpText        String?  @map("help_text")
+  order           Int
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  entity          EntityDefinition @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@map("field_definitions")
+}
+
+model ConversionPlan {
+  id               String   @id @default(uuid())
+  siteId           String   @map("site_id")
+  entities         Json
+  dbSchema         String   @map("db_schema") @db.Text
+  frontendViews    Json     @map("frontend_views")
+  backendRoutes    Json     @map("backend_routes")
+  migrations       Json
+  confidenceScores Json?    @map("confidence_scores")
+  aiReasoning      String?  @map("ai_reasoning") @db.Text
+  notes            String?
+  version          Int      @default(1)
+  approvedAt       DateTime? @map("approved_at")
+  approvedBy       String?  @map("approved_by")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  site             Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@map("conversion_plans")
+}
+
+model AnalyticsEvent {
+  id            String   @id @default(uuid())
+  ts            DateTime @default(now())
+  scope         String
+  siteId        String?  @map("site_id")
+  type          String
+  sessionId     String   @map("session_id")
+  ipHash        String   @map("ip_hash")
+  userAgentHash String?  @map("user_agent_hash")
+  url           String?
+  title         String?
+  referrer      String?
+  utmSource     String?  @map("utm_source")
+  utmMedium     String?  @map("utm_medium")
+  utmCampaign   String?  @map("utm_campaign")
+  meta          Json?
+
+  @@index([ts, scope, siteId])
+  @@map("analytics_events")
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  ts            DateTime @default(now())
+  actorUserId   String   @map("actor_user_id")
+  action        String
+  targetType    String   @map("target_type")
+  targetId      String   @map("target_id")
+  changes       Json?
+  ipHash        String   @map("ip_hash")
+  userAgent     String?  @map("user_agent")
+
+  actor         User     @relation(fields: [actorUserId], references: [id])
+
+  @@map("audit_logs")
+}
