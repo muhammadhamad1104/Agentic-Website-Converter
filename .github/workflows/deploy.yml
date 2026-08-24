@@ -20,13 +20,13 @@ jobs:
         uses: docker/setup-buildx-action@v2
 
       - name: Build Frontend
-        run: docker build -t agentic-converter-frontend:latest -f apps/frontend/Dockerfile .
+        run: docker build -t agentic-converter-frontend:latest apps/frontend
 
       - name: Build Backend
-        run: docker build -t agentic-converter-backend:latest -f apps/backend/Dockerfile .
+        run: docker build -t agentic-converter-backend:latest apps/backend
 
       - name: Build Worker
-        run: docker build -t agentic-converter-worker:latest -f apps/worker/Dockerfile .
+        run: docker build -t agentic-converter-worker:latest apps/worker
 
   # Note: The Terraform and Kubernetes deployment steps are left manual for safety 
   # to avoid unexpected AWS billing charges on automatic pushes.
