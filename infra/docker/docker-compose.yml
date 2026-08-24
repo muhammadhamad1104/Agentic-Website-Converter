@@ -1,0 +1,134 @@
+services:
+  # PostgreSQL 16 Database (Latest Stable)
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentic-postgres
+    environment:
+      POSTGRES_USER: agentic
+      POSTGRES_PASSWORD: dev_password
+      POSTGRES_DB: agentic_converter
+      # Performance tuning
+      POSTGRES_SHARED_BUFFERS: 256MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 1GB
+      POSTGRES_MAX_CONNECTIONS: 100
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentic"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentic-network
+
+  # Redis 7 Cache & Queue
+  redis:
+    image: redis:7-alpine
+    container_name: agentic-redis
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - agentic-network
+
+  # Node.js Backend API
+  backend:
+    build:
+      context: ../../apps/backend
+      dockerfile: ../../infra/docker/Dockerfile.backend
+    container_name: agentic-backend
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: development
+      PORT: 5000
+      DATABASE_URL: postgresql://agentic:dev_password@postgres:5432/agentic_converter
+      DB_POOL_MAX: 20
+      DB_POOL_MIN: 5
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret-change-in-production
+      ANALYTICS_SECRET: dev-analytics-secret
+      AGENT_API_URL: http://agent:8000
+      CORS_ORIGIN: http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../../apps/backend:/app
+      - /app/node_modules
+      - backend_logs:/app/logs
+    networks:
+      - agentic-network
+    restart: unless-stopped
+
+  # React Frontend (Vite)
+  frontend:
+    build:
+      context: ../../apps/frontend
+      dockerfile: ../../infra/docker/Dockerfile.frontend
+    container_name: agentic-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_API_URL: http://localhost:5000
+      VITE_WS_URL: ws://localhost:5000
+    volumes:
+      - ../../apps/frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - agentic-network
+    restart: unless-stopped
+
+  # Python AI Agent Worker
+  agent:
+    build:
+      context: ../../apps/worker/py-agent
+      dockerfile: ../../../infra/docker/Dockerfile.agent
+    container_name: agentic-agent
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://agentic:dev_password@postgres:5432/agentic_converter
+      REDIS_URL: redis://redis:6379
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-test-key}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LOG_LEVEL: INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../../apps/worker/py-agent:/app
+      - agent_temp:/app/temp
+    networks:
+      - agentic-network
+    restart: unless-stopped
+
+networks:
+  agentic-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  backend_logs:
+    driver: local
+  agent_temp:
+    driver: local
