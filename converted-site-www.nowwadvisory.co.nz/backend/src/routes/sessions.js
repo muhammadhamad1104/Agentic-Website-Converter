@@ -1,0 +1,1 @@
+const express = require('express'); const router = express.Router(); const { sessions } = require('../controllers'); router.get('/', sessions.index); module.exports = router;

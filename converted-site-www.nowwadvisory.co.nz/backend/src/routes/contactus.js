@@ -1,0 +1,1 @@
+const express = require('express'); const router = express.Router(); const { contactus } = require('../controllers'); router.get('/', contactus.index); module.exports = router;

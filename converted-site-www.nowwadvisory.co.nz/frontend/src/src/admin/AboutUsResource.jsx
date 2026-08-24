@@ -1,0 +1,1 @@
+import React from 'react'; const AboutUsResource = () => <div>About Us Resource</div>; export default AboutUsResource;
