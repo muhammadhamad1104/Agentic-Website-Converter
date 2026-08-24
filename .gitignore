@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Environment
+.env
+.env.local
+*.env
+
+# Build outputs
+dist/
+build/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Prisma
+apps/backend/prisma/migrations/*
+!apps/backend/prisma/migrations/.gitkeep
+
+# Testing
+coverage/
+.pytest_cache/
+
+# Docker
+docker-compose.override.yml
+
+# Local documentation files to exclude
+04072213023_Muhammad_Hamad_Agentic_static_to_dynamic_website_converter.docx
+04072213023_Muhammad_Hamad_Agentic_static_to_dynamic_website_converter.md
+change-needed.md
+chapter5-implementation.md
+apps/worker/test_*.py
