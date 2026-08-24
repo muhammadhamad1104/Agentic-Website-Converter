@@ -1,0 +1,1 @@
+import React from 'react'; const UsersResource = () => <div>Users Resource</div>; export default UsersResource;

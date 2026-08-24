@@ -1,0 +1,1 @@
+import React from 'react'; const ContactUsResource = () => <div>Contact Us Resource</div>; export default ContactUsResource;

@@ -1,0 +1,1 @@
+import React from 'react'; const AuthGuard = () => <div>Admin Auth Guard</div>; export default AuthGuard;
