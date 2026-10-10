@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import zipfile
 from unittest.mock import patch
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures("successful_runtime_build")
 
 from src.engine.job_store import InMemoryJobStore
 from src.engine.package_builder import RUNTIME_REQUIRED_FILES
@@ -33,7 +36,7 @@ class _StructuredLLM:
         {
           "entities": [
             {
-              "name": "Card",
+              "name": "Service",
               "confidence": 0.9,
               "evidence": ["class=card"],
               "fields": [
@@ -55,7 +58,8 @@ def test_lineage_versions_created_for_schema_and_artifacts() -> None:
     created = engine.create_job(html_pages=[HTML_REPEAT])
     job_id = created["job_id"]
 
-    first = engine.run_job(job_id)
+    engine.run_job(job_id)
+    first = engine.infer_schema_stage(job_id)
     assert first["status"] == "awaiting_approval"
 
     schema_history = engine.get_schema_history(job_id)
@@ -69,7 +73,7 @@ def test_lineage_versions_created_for_schema_and_artifacts() -> None:
     assert len(artifact_history) >= 1
 
 
-def test_export_blocked_when_validation_has_blockers() -> None:
+def test_export_requires_generated_files() -> None:
     store = InMemoryJobStore()
     with patch.object(ConversionEngine, "_build_failover_llm", return_value=_InvalidLLM()):
         engine = ConversionEngine(store=store)
@@ -78,10 +82,11 @@ def test_export_blocked_when_validation_has_blockers() -> None:
     job_id = created["job_id"]
 
     engine.run_job(job_id)
-    engine.decide_schema(job_id, "approved")
-    engine.run_job(job_id)
+    assert engine.infer_schema_stage(job_id)["status"] == "failed"
+    with pytest.raises(ValueError, match="valid schema proposal"):
+        engine.decide_schema(job_id, "approved")
 
-    with pytest.raises(ValueError, match="Export prevented"):
+    with pytest.raises(ValueError, match="No generated files"):
         engine.export_job(job_id)
 
 
@@ -94,6 +99,7 @@ def test_export_succeeds_when_validation_gate_open() -> None:
     job_id = created["job_id"]
 
     engine.run_job(job_id)
+    engine.infer_schema_stage(job_id)
     engine.decide_schema(job_id, "approved")
     engine.run_job(job_id)
 
@@ -114,6 +120,7 @@ def test_export_zip_contains_runtime_dynamic_website_only() -> None:
     job_id = created["job_id"]
 
     engine.run_job(job_id)
+    engine.infer_schema_stage(job_id)
     engine.decide_schema(job_id, "approved")
     engine.run_job(job_id)
 
@@ -131,7 +138,8 @@ def test_export_zip_contains_runtime_dynamic_website_only() -> None:
 
 
 
-def test_export_blocked_when_deployment_ready_false() -> None:
+@pytest.mark.parametrize("gate,build", [("blocked", "failed"), ("blocked", "not_run"), ("open", "passed")])
+def test_export_available_despite_quality_failures(gate, build) -> None:
     store = InMemoryJobStore()
     with patch.object(ConversionEngine, "_build_failover_llm", return_value=_StructuredLLM()):
         engine = ConversionEngine(store=store)
@@ -140,6 +148,7 @@ def test_export_blocked_when_deployment_ready_false() -> None:
     job_id = created["job_id"]
 
     engine.run_job(job_id)
+    engine.infer_schema_stage(job_id)
     engine.decide_schema(job_id, "approved")
     engine.run_job(job_id)
 
@@ -147,15 +156,23 @@ def test_export_blocked_when_deployment_ready_false() -> None:
     assert job is not None
     job.validation_report = {
         **(job.validation_report or {}),
-        "validation_gate": "open",
+        "validation_gate": gate,
+        "build_status": build,
         "deployment_ready": False,
         "readiness_score": 40.0,
         "min_readiness_score_required": 80.0,
     }
     store.save_job(job)
 
-    with pytest.raises(ValueError, match="deployment readiness"):
-        engine.export_job(job_id)
+    manifest = engine.export_job(job_id)
+    assert manifest["export_status"] == "ready"
+    assert manifest["quality_status"] == "warnings"
+    with zipfile.ZipFile(manifest["download"]["zip_path"]) as archive:
+        report = json.loads(archive.read("export-report.json"))
+        assert report["deployment_ready"] is False
+        assert report["validation_gate"] == gate
+        assert report["build_status"] == build
+    assert store.get_job(job_id).validation_report["deployment_ready"] is False
 
 
 def test_export_blocked_when_package_layout_metadata_invalid() -> None:
@@ -167,6 +184,7 @@ def test_export_blocked_when_package_layout_metadata_invalid() -> None:
     job_id = created["job_id"]
 
     engine.run_job(job_id)
+    engine.infer_schema_stage(job_id)
     engine.decide_schema(job_id, "approved")
     engine.run_job(job_id)
 
@@ -184,6 +202,7 @@ def test_export_blocked_when_zip_is_below_minimum_size(tmp_path: Path) -> None:
     job_id = created["job_id"]
 
     engine.run_job(job_id)
+    engine.infer_schema_stage(job_id)
     engine.decide_schema(job_id, "approved")
     engine.run_job(job_id)
 
@@ -229,6 +248,7 @@ def test_export_copies_zip_to_configured_downloads_dir(tmp_path: Path) -> None:
     job_id = created["job_id"]
 
     engine.run_job(job_id)
+    engine.infer_schema_stage(job_id)
     engine.decide_schema(job_id, "approved")
     engine.run_job(job_id)
 

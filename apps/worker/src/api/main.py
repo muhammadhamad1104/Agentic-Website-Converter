@@ -1,12 +1,17 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Request, Response
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import os
 import asyncio
 from pathlib import Path
 from typing import Any
 
 from src.engine.service import ConversionEngine
+from src.engine.preview import PreviewManager
+from src.config.settings import settings
+import secrets
+from uuid import UUID
+import requests
 
 app = FastAPI(
     title="Agentic Converter API",
@@ -16,11 +21,73 @@ app = FastAPI(
 
 # Global ConversionEngine instance
 engine = ConversionEngine()
+previews = PreviewManager()
+
+
+@app.on_event("shutdown")
+def stop_previews():
+    previews.shutdown()
+
+
+class PreviewRequest(BaseModel):
+    owner_id: str = Field(min_length=1, max_length=128)
+    lease_id: UUID
+
+
+@app.api_route("/api/previews/{lease_id}/proxy/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
+async def preview_proxy(lease_id: UUID, path: str, request: Request,
+                        x_preview_secret: str = Header(default=""), x_preview_owner: str = Header(default="")):
+    if not settings.PREVIEW_API_SECRET or not secrets.compare_digest(settings.PREVIEW_API_SECRET, x_preview_secret):
+        raise HTTPException(status_code=403, detail="Preview service is not authorized")
+    state = await asyncio.to_thread(previews.status, x_preview_owner, str(lease_id))
+    if state["status"] != "ready":
+        return Response("Preview has stopped.", status_code=410, media_type="text/plain")
+    body = await request.body()
+    if len(body) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Preview request is too large")
+    headers = {key: value for key, value in request.headers.items() if key.lower() in {"content-type", "cookie", "range", "accept"}}
+    try:
+        upstream = await asyncio.to_thread(requests.request, request.method, state["url"] + "/" + path,
+            params=list(request.query_params.multi_items()), headers=headers, data=body, timeout=25, allow_redirects=False)
+    except requests.RequestException:
+        return Response("Preview is unavailable.", status_code=503, media_type="text/plain")
+    forwarded = {key: value for key, value in upstream.headers.items()
+                 if key.lower() in {"content-type", "content-range", "accept-ranges", "location", "set-cookie"}}
+    return Response(upstream.content, status_code=upstream.status_code, headers=forwarded)
+
+
+@app.api_route("/api/jobs/{job_id}/preview/{action}", methods=["POST"])
+async def preview_action(job_id: str, action: str, request: PreviewRequest,
+                         x_preview_secret: str = Header(default="")):
+    expected = settings.PREVIEW_API_SECRET
+    if not expected or not secrets.compare_digest(expected, x_preview_secret):
+        raise HTTPException(status_code=403, detail="Preview service is not authorized")
+    owner, lease = request.owner_id, str(request.lease_id)
+    if action == "stop":
+        return await asyncio.to_thread(previews.stop, owner, lease)
+    if action in {"status", "heartbeat"}:
+        return await asyncio.to_thread(previews.status, owner, lease, heartbeat=action == "heartbeat")
+    if action != "start":
+        raise HTTPException(status_code=404, detail="Unknown preview action")
+    try:
+        job = await asyncio.to_thread(engine.get_job, job_id)
+        if not job.get("generated_artifacts"):
+            raise HTTPException(status_code=409, detail="Generate the website before previewing")
+        return await asyncio.to_thread(previews.start, owner, lease, job)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "service": "worker"}
 
 class JobRequest(BaseModel):
     url: str | None = None
     file_path: str | None = None
-    crawl_depth: int = 2
+    crawl_depth: int = Field(default=3, ge=0)
+    full_site: bool = True
+    max_pages: int = Field(default=0, ge=0)
+    max_assets: int = Field(default=0, ge=0)
     extract_images: bool = True
     ai_provider: str = "openai"
 
@@ -44,21 +111,22 @@ async def execute_real_conversion_job(job_id: str):
 @app.post("/api/jobs")
 async def create_job(request: JobRequest, background_tasks: BackgroundTasks):
     target_url = request.url or request.file_path
+    if request.url and request.file_path:
+        raise HTTPException(status_code=400, detail="Provide exactly one input source")
     if not target_url:
         raise HTTPException(status_code=400, detail="Must provide either URL or file_path")
         
     crawl_config = {
         "depth_limit": request.crawl_depth,
-        "extract_images": request.extract_images,
-        "max_pages": 100 if request.crawl_depth >= 3 else (50 if request.crawl_depth == 2 else 20),
-        "max_assets": 100 if request.extract_images else 0,
+        "full_site": request.full_site,
+        "max_pages": request.max_pages,
+        "max_assets": request.max_assets,
         "render_js": True,
         "enforce_static_source": False
     }
 
     job_data = engine.create_job(
-        input_url=target_url if request.url else None,
-        html_pages=[target_url] if request.file_path else None,
+        input_url=target_url,
         crawl_config=crawl_config
     )
     job_id = job_data["job_id"]
@@ -79,7 +147,7 @@ async def get_job_status(job_id: str):
 @app.post("/api/jobs/{job_id}/run")
 async def run_job(job_id: str):
     try:
-        job_data = engine.run_job(job_id)
+        job_data = await asyncio.to_thread(engine.run_job, job_id)
         return {"job": job_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -132,9 +200,16 @@ async def execute_schema_reinference(job_id: str):
 @app.post("/api/jobs/{job_id}/infer-schema")
 async def infer_schema_endpoint(job_id: str, background_tasks: BackgroundTasks):
     try:
+        job = engine.get_job(job_id)
+        if job["status"] not in {"crawled", "extracted", "awaiting_approval", "schema_proposed"}:
+            raise HTTPException(status_code=409, detail="Crawl must complete before schema inference")
         print(f"[Worker Engine] Triggering Stage 2 Schema Inference for job_id={job_id}")
         background_tasks.add_task(execute_schema_inference, job_id)
         return {"message": "Schema inference started", "job_id": job_id}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -156,7 +231,7 @@ async def submit_schema_decision(job_id: str, request: DecisionRequest, backgrou
 @app.post("/api/jobs/{job_id}/export")
 async def export_job(job_id: str):
     try:
-        export_manifest = engine.export_job(job_id)
+        export_manifest = await asyncio.to_thread(engine.export_job, job_id)
         zip_path = export_manifest.get("download", {}).get("zip_path")
         if not zip_path:
             raise ValueError("Zip path not found in export manifest")

@@ -11,6 +11,7 @@ class ConversionState(TypedDict, total=False):
 
     # ── Crawl config ──────────────────────────────────────────────────────────
     crawl_depth_limit: int
+    crawl_full_site: bool
     crawl_max_pages: int
     crawl_max_assets: int
     crawl_same_domain_only: bool

@@ -15,6 +15,11 @@ from src.engine.nodes import (
 from src.engine.workflow import build_conversion_workflow
 
 
+class StructuredLLM:
+    def invoke(self, prompt):
+        return '{"entities":[{"name":"Product","confidence":0.95,"fields":[{"name":"title","type":"string","confidence":0.95,"evidence":["product-card"]}]}]}'
+
+
 SAMPLE_HTML = """
 <html>
   <body>
@@ -28,7 +33,7 @@ SAMPLE_HTML = """
 
 def test_infer_schema_node_produces_entities() -> None:
     state = {"html_pages": [SAMPLE_HTML], "schema_decision": "pending", "errors": []}
-    result = infer_schema_node(state)
+    result = infer_schema_node(state, llm=StructuredLLM())
     assert result["status"] == "schema_proposed"
     assert result["schema_proposal"]["entities"]
 
@@ -187,6 +192,7 @@ def test_generate_artifacts_blocks_when_schema_gate_not_open() -> None:
 
 def test_generate_artifacts_emits_quality_report_when_inputs_ready() -> None:
     state = {
+        "crawled_page_map": {"https://example.com/": SAMPLE_HTML},
         "status": "template_ready",
         "schema_proposal": {
             "entities": [
@@ -221,7 +227,7 @@ def test_generate_artifacts_emits_quality_report_when_inputs_ready() -> None:
     assert any(event.get("gate") == "artifact_generation" for event in quality_events)
 
 
-def test_validation_passes_with_generated_artifacts() -> None:
+def test_validation_passes_with_generated_artifacts(successful_runtime_build) -> None:
     state = {
         "schema_proposal": {
             "entities": [
@@ -275,10 +281,11 @@ def test_validation_blocks_when_deployment_metadata_missing() -> None:
 
 
 def test_workflow_stops_at_human_gate_when_pending() -> None:
-    workflow = build_conversion_workflow()
+    workflow = build_conversion_workflow(llm=StructuredLLM())
     result = workflow.invoke(
         {
             "job_id": "j1",
+            "target_stage": "schema",
             "html_pages": [SAMPLE_HTML],
             "schema_decision": "pending",
             "status": "draft",
@@ -289,26 +296,30 @@ def test_workflow_stops_at_human_gate_when_pending() -> None:
     assert result["schema_proposal"]["entities"]
 
 
-def test_workflow_reaches_validated_when_approved() -> None:
-    workflow = build_conversion_workflow()
+def test_workflow_reaches_validated_when_approved(successful_runtime_build) -> None:
+    workflow = build_conversion_workflow(llm=StructuredLLM())
     result = workflow.invoke(
         {
             "job_id": "j2",
+            "target_stage": "schema",
             "html_pages": [SAMPLE_HTML],
             "schema_decision": "approved",
             "status": "draft",
             "errors": [],
         }
     )
-    assert result["status"] == "validated"
+    assert result["status"] == "awaiting_approval"
+    result = workflow.invoke({**result, "status": "approved", "schema_decision": "approved", "target_stage": "generate"})
+    assert result["status"] == "exported"
     assert result["generated_artifacts"]["backend"]["endpoints"]
 
 
-def test_workflow_emits_structured_quality_gate_audit_events() -> None:
-    workflow = build_conversion_workflow()
+def test_workflow_emits_structured_quality_gate_audit_events(successful_runtime_build) -> None:
+    workflow = build_conversion_workflow(llm=StructuredLLM())
     result = workflow.invoke(
         {
             "job_id": "j2-audit",
+            "target_stage": "schema",
             "html_pages": [SAMPLE_HTML],
             "schema_decision": "approved",
             "status": "draft",
@@ -316,7 +327,9 @@ def test_workflow_emits_structured_quality_gate_audit_events() -> None:
         }
     )
 
-    assert result["status"] == "validated"
+    assert result["status"] == "awaiting_approval"
+    result = workflow.invoke({**result, "status": "approved", "schema_decision": "approved", "target_stage": "generate"})
+    assert result["status"] == "exported"
     trace_events = result.get("trace_events", [])
     quality_events = [event for event in trace_events if event.get("event_type") == "quality_gate"]
     assert quality_events
@@ -338,13 +351,14 @@ def test_workflow_stops_after_schema_inference_failure() -> None:
     result = workflow.invoke(
         {
             "job_id": "j3",
+            "target_stage": "schema",
             "html_pages": ["<html><body><div>Only one value</div></body></html>"],
             "schema_decision": "pending",
             "status": "draft",
             "errors": [],
         }
     )
-    assert result["status"] == "failed"
+    assert result["status"] in {"failed", "cancelled"}
     assert any(
         any(token in message.lower() for token in {"schema", "extraction", "representative content"})
         for message in result["errors"]

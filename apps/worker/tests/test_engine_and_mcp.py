@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from unittest.mock import patch
+import pytest
+from src.engine.job_store import InMemoryJobStore
+
+pytestmark = pytest.mark.usefixtures("successful_runtime_build")
 
 from src.engine.service import ConversionEngine
 
@@ -18,12 +22,12 @@ SAMPLE_HTML = """
 
 class _FakeLLM:
     def invoke(self, prompt: str) -> str:
-        return "Use singular names and stable field names."
+        return '{"entities":[{"name":"TeamMember","confidence":0.95,"fields":[{"name":"name","type":"string","confidence":0.95,"evidence":["team-card"]}]}]}'
 
 
 def _build_engine_without_external_llm() -> ConversionEngine:
     with patch.object(ConversionEngine, "_build_failover_llm", return_value=_FakeLLM()):
-        return ConversionEngine()
+        return ConversionEngine(store=InMemoryJobStore())
 
 
 def test_engine_flow_human_gate_then_approval() -> None:
@@ -31,7 +35,8 @@ def test_engine_flow_human_gate_then_approval() -> None:
     created = engine.create_job(html_pages=[SAMPLE_HTML])
     job_id = created["job_id"]
 
-    first_run = engine.run_job(job_id)
+    assert engine.run_job(job_id)["status"] == "crawled"
+    first_run = engine.infer_schema_stage(job_id)
     assert first_run["status"] == "awaiting_approval"
     assert first_run["schema_proposal"]["entities"]
     assert first_run["crawl_artifacts"]["totals"]["pages_crawled"] == 1
@@ -50,17 +55,20 @@ def test_engine_flow_human_gate_then_approval() -> None:
     assert second_run["quality_summary"]["overall_gate"] == "open"
 
 
-def test_engine_reject_path_fails_job() -> None:
+def test_engine_reject_path_requires_new_schema_approval() -> None:
     engine = _build_engine_without_external_llm()
     created = engine.create_job(html_pages=[SAMPLE_HTML])
     job_id = created["job_id"]
 
     engine.run_job(job_id)
-    engine.decide_schema(job_id, "rejected")
-    result = engine.run_job(job_id)
+    engine.infer_schema_stage(job_id)
+    rejected = engine.decide_schema(job_id, "rejected", "Revise team fields")
+    assert not rejected["schema_proposal"]
+    assert rejected["schema_decision"] == "pending"
+    result = engine.infer_schema_stage(job_id)
 
-    assert result["status"] == "failed"
-    assert any("rejected" in e.lower() for e in result["errors"])
+    assert result["status"] == "awaiting_approval"
+    assert not result["generated_artifacts"]
 
 
 def test_run_job_is_idempotent_after_validated() -> None:
@@ -69,6 +77,7 @@ def test_run_job_is_idempotent_after_validated() -> None:
     job_id = created["job_id"]
 
     engine.run_job(job_id)
+    engine.infer_schema_stage(job_id)
     engine.decide_schema(job_id, "approved")
     validated = engine.run_job(job_id)
     assert validated["status"] == "validated"
@@ -83,7 +92,8 @@ def test_run_job_returns_node_trace_events() -> None:
     created = engine.create_job(html_pages=[SAMPLE_HTML])
     job_id = created["job_id"]
 
-    first = engine.run_job(job_id)
+    engine.run_job(job_id)
+    first = engine.infer_schema_stage(job_id)
     assert first["status"] == "awaiting_approval"
     events = first.get("trace_events", [])
     assert events
@@ -100,7 +110,7 @@ def test_trace_events_persist_in_job_store() -> None:
     fetched = engine.get_job(job_id)
     events = fetched.get("trace_events", [])
     assert events
-    assert events[-1].get("node") == "approval_gate"
+    assert events[-1].get("node") == "extract_content"
     assert fetched.get("crawl_artifacts", {}).get("totals", {}).get("pages_crawled") == 1
     assert "extraction_report" in fetched
     assert "schema_quality_report" in fetched

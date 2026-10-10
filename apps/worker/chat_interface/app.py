@@ -106,6 +106,8 @@ def run_conversion_for_source(source: str) -> tuple[str, str | None]:
     job_id = created["job_id"]
 
     step1 = engine.run_job(job_id)
+    if step1.get("status") == "crawled":
+        step1 = engine.infer_schema_stage(job_id)
     if step1.get("status") == "failed":
         return (
             f"I could not complete conversion for {source}.\n\n"

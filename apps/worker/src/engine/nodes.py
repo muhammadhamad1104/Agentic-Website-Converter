@@ -10,7 +10,9 @@ import shutil
 import tempfile
 import time
 import zipfile
+import xml.etree.ElementTree as ET
 from collections import Counter, deque
+from collections.abc import Mapping
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,7 @@ from src.engine.models import EntityCandidate, FieldCandidate, RelationshipCandi
 from src.engine.state import ConversionState
 from src.engine.template_structure import materialize_template_structure
 from src.engine.generation_models import FullStackArtifact
+from src.engine.source_assets import css_urls, srcset_entries
 
 
 GENERIC_ENTITY_NAMES = {
@@ -182,8 +185,7 @@ def _is_same_hostname(url: str, base_hostname: str) -> bool:
 
 def _extract_srcset_urls(srcset_value: str, base_url: str) -> set[str]:
     urls: set[str] = set()
-    for chunk in str(srcset_value or "").split(","):
-        candidate = chunk.strip().split(" ")[0]
+    for candidate, _ in srcset_entries(str(srcset_value or "")):
         normalized = _normalize_http_url(base_url, candidate)
         if normalized:
             urls.add(normalized)
@@ -191,23 +193,25 @@ def _extract_srcset_urls(srcset_value: str, base_url: str) -> set[str]:
 
 
 def _extract_css_urls(css_text: str, base_url: str) -> set[str]:
-    urls: set[str] = set()
-    for match in CSS_URL_PATTERN.finditer(css_text or ""):
-        raw = str(match.group("raw") or "").strip().strip("\"'")
-        normalized = _normalize_http_url(base_url, raw)
-        if normalized:
-            urls.add(normalized)
-    return urls
+    return {url for url in css_urls(css_text, base_url) if url.startswith(("http://", "https://"))}
 
 
 def _collect_page_and_asset_urls(soup: BeautifulSoup, page_url: str) -> tuple[set[str], set[str]]:
     page_urls: set[str] = set()
     asset_urls: set[str] = set()
 
+    base_tag = soup.find("base", href=True)
+    if base_tag:
+        page_url = urljoin(page_url, base_tag["href"])
+
     for anchor in soup.find_all("a", href=True):
         normalized = _normalize_http_url(page_url, str(anchor.get("href", "")))
         if normalized:
-            page_urls.add(normalized)
+            suffix = Path(urlparse(normalized).path).suffix.lower()
+            if anchor.has_attr("download") or suffix in {".pdf", ".zip", ".jpg", ".jpeg", ".png", ".webp", ".svg", ".mp4", ".mp3", ".docx", ".xlsx"}:
+                asset_urls.add(normalized)
+            else:
+                page_urls.add(normalized)
 
     for tag_name, attr_name in [
         ("img", "src"),
@@ -216,6 +220,9 @@ def _collect_page_and_asset_urls(soup: BeautifulSoup, page_url: str) -> tuple[se
         ("video", "poster"),
         ("audio", "src"),
         ("source", "src"),
+        ("track", "src"),
+        ("use", "href"),
+        ("use", "xlink:href"),
         ("iframe", "src"),
         ("embed", "src"),
         ("object", "data"),
@@ -249,7 +256,7 @@ def _collect_page_and_asset_urls(soup: BeautifulSoup, page_url: str) -> tuple[se
     for meta in soup.find_all("meta", content=True):
         name = str(meta.get("name", "") or "").strip().lower()
         prop = str(meta.get("property", "") or "").strip().lower()
-        if any(token in f"{name} {prop}" for token in {"image", "icon", "logo", "url"}):
+        if any(token in f"{name} {prop}" for token in {"image", "icon", "logo"}):
             normalized = _normalize_http_url(page_url, str(meta.get("content", "") or ""))
             if normalized:
                 asset_urls.add(normalized)
@@ -316,7 +323,7 @@ def _fetch_with_retries(
 
 def _response_content_type(response: Any) -> str:
     headers = getattr(response, "headers", {}) or {}
-    if isinstance(headers, dict):
+    if isinstance(headers, Mapping):
         for key, value in headers.items():
             if str(key).strip().lower() == "content-type":
                 return str(value)
@@ -530,6 +537,7 @@ class _PlaywrightCrawlerSession:
         self._browser: Any = None
         self._context: Any = None
         self._page: Any = None
+        self.resource_urls: set[str] = set()
 
     def open(self) -> None:
         sync_api = importlib.import_module("playwright.sync_api")
@@ -538,6 +546,8 @@ class _PlaywrightCrawlerSession:
         self._browser = self._driver.chromium.launch(headless=self._headless)
         self._context = self._browser.new_context(ignore_https_errors=not self._verify_tls)
         self._page = self._context.new_page()
+        self._page.on("response", lambda response: self.resource_urls.add(response.url)
+                      if response.request.resource_type in {"stylesheet", "script", "image", "font", "media"} else None)
 
     def close(self) -> None:
         if self._page is not None:
@@ -569,6 +579,7 @@ class _PlaywrightCrawlerSession:
         if self._page is None:
             raise RuntimeError("Playwright session not initialized")
 
+        self.resource_urls = set()
         response = self._page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms)
         if self._wait_ms > 0:
             try:
@@ -577,6 +588,12 @@ class _PlaywrightCrawlerSession:
                 # Not all sites reliably reach networkidle; keep rendered DOM anyway.
                 pass
 
+        raw_html = response.text() if response is not None else self._page.content()
+        height = self._page.evaluate("document.documentElement.scrollHeight")
+        for offset in range(0, min(height, 100000), 700):
+            self._page.evaluate("(y) => window.scrollTo(0, y)", offset)
+            self._page.wait_for_timeout(50)
+        self._page.evaluate("window.scrollTo(0, 0)")
         html = str(self._page.content() or "")
         final_url = str(getattr(self._page, "url", url) or url)
 
@@ -602,6 +619,7 @@ class _PlaywrightCrawlerSession:
             headers=headers,
         )
         rendered.raise_for_status()
+        rendered.source_content = raw_html.encode("utf-8")
         return rendered
 
 
@@ -660,7 +678,13 @@ def _discover_sitemap_page_urls(
                 }
             )
 
-    for sitemap_url in sorted(candidate_sitemaps):
+    pending_sitemaps = deque(sorted(candidate_sitemaps))
+    visited_sitemaps = set()
+    while pending_sitemaps:
+        sitemap_url = pending_sitemaps.popleft()
+        if sitemap_url in visited_sitemaps:
+            continue
+        visited_sitemaps.add(sitemap_url)
         try:
             sitemap_response = _fetch_with_retries(
                 sitemap_url,
@@ -680,7 +704,15 @@ def _discover_sitemap_page_urls(
             )
             continue
 
-        for raw_loc in SITEMAP_LOC_PATTERN.findall(sitemap_text):
+        try:
+            document = ET.fromstring(sitemap_text)
+        except ET.ParseError:
+            continue
+        is_index = document.tag.rsplit("}", 1)[-1] == "sitemapindex"
+        for element in document.iter():
+            if element.tag.rsplit("}", 1)[-1] != "loc" or not element.text:
+                continue
+            raw_loc = element.text.strip()
             normalized = _normalize_http_url(sitemap_url, raw_loc)
             if not normalized:
                 continue
@@ -689,7 +721,10 @@ def _discover_sitemap_page_urls(
                 continue
             if same_domain_only and hostname != base_hostname:
                 continue
-            discovered.add(normalized)
+            if is_index:
+                pending_sitemaps.append(normalized)
+            else:
+                discovered.add(normalized)
 
     return sorted(discovered), failures
 
@@ -968,6 +1003,11 @@ def crawl_site_node(state: ConversionState) -> ConversionState:
         return {**state, "status": state.get("status")}
 
     html_pages = state.get("html_pages", [])
+    existing_pages = state.get("crawled_page_map") or _load_crawled_page_map_from_records(
+        (state.get("crawl_artifacts") or {}).get("pages", []))
+    if existing_pages and state.get("target_stage") == "schema":
+        return {**state, "crawled_pages": list(existing_pages.values()), "crawled_page_map": existing_pages,
+                "status": "crawled"}
     job_id = str(state.get("job_id", "manual-job"))
 
     resume_from_checkpoint = bool(
@@ -1055,6 +1095,7 @@ def crawl_site_node(state: ConversionState) -> ConversionState:
         return {
             **state,
             "crawled_pages": html_pages,
+            "crawled_page_map": {f"inline://page-{i + 1}": html for i, html in enumerate(html_pages)},
             "sitemap": {
                 "pages": [f"inline://page-{i + 1}" for i in range(len(html_pages))],
                 "page_count": len(html_pages),
@@ -1205,6 +1246,7 @@ def crawl_site_node(state: ConversionState) -> ConversionState:
         return {
             **state,
             "crawled_pages": zip_result["crawled_pages"],
+            "crawled_page_map": dict(zip(zip_result["page_urls"], zip_result["crawled_pages"])),
             "sitemap": {
                 "root": zip_result["root_url"],
                 "pages": zip_result["page_urls"],
@@ -1485,12 +1527,15 @@ def crawl_site_node(state: ConversionState) -> ConversionState:
             content = _response_bytes(response)
             text = _response_text(response, content)
             content_type = _response_content_type(response)
+            source_content = getattr(response, "source_content", None)
+            if not isinstance(source_content, bytes):
+                source_content = content
             page_file = _write_snapshot_file(
                 directory=pages_dir,
                 kind="page",
                 index=len(page_records) + 1,
                 source_url=response_url,
-                content=content,
+                content=source_content,
                 content_type=content_type,
             )
 
@@ -1499,6 +1544,7 @@ def crawl_site_node(state: ConversionState) -> ConversionState:
             page_records.append(
                 {
                     "url": response_url,
+                    "requested_url": clean_url,
                     "status_code": _response_status_code(response),
                     "content_type": content_type,
                     "content_length": len(content),
@@ -1559,8 +1605,15 @@ def crawl_site_node(state: ConversionState) -> ConversionState:
 
             soup = BeautifulSoup(text, "html.parser")
             discovered_pages, discovered_assets = _collect_page_and_asset_urls(soup, response_url)
+            if isinstance(getattr(response, "source_content", None), bytes):
+                original = BeautifulSoup(source_content.decode("utf-8", errors="replace"), "html.parser")
+                original_pages, original_assets = _collect_page_and_asset_urls(original, response_url)
+                discovered_pages.update(original_pages)
+                discovered_assets.update(original_assets)
+            if renderer is not None:
+                discovered_assets.update(renderer.resource_urls)
 
-            if depth < depth_limit:
+            if state.get("crawl_full_site", False) or depth < depth_limit:
                 for next_url in sorted(discovered_pages):
                     if next_url in visited_pages or next_url in queued_pages:
                         continue
@@ -1683,6 +1736,7 @@ def crawl_site_node(state: ConversionState) -> ConversionState:
             asset_records.append(
                 {
                     "url": response_url,
+                    "requested_url": asset_url,
                     "status_code": _response_status_code(response),
                     "content_type": content_type,
                     "content_length": len(content),
@@ -1821,7 +1875,7 @@ def crawl_site_node(state: ConversionState) -> ConversionState:
     return {
         **state,
         "crawled_pages": crawled_pages,
-        "crawled_page_map": crawled_page_map if 'crawled_page_map' in locals() else _load_crawled_page_map_from_records(page_records),
+        "crawled_page_map": _load_crawled_page_map_from_records(page_records),
         "sitemap": {
             "root": normalized_input,
             "pages": page_urls,
@@ -2071,10 +2125,9 @@ def _build_llm_schema_prompt(
             if compact_block:
                 slices.append(f"EXTRACTED_BLOCK_{idx}: {compact_block[:2500]}")
 
-    page_slice_limit = max(1, min(3, max_evidence_slices))
-    for idx, html in enumerate(html_pages[:page_slice_limit], start=1):
+    for idx, html in enumerate(html_pages, start=1):
         compact = re.sub(r"\s+", " ", html).strip()
-        slices.append(f"PAGE_{idx}: {compact[:2500]}")
+        slices.append(f"PAGE_{idx}: {compact}")
 
     joined_pages = "\n\n".join(slices)
 
@@ -2093,7 +2146,7 @@ def _build_llm_schema_prompt(
         "CRITICAL RULES: "
         "1. DO NOT output layout structures, UI components, or CSS classes as models (e.g. NEVER output 'PaddingGlobal', 'ContainerLarge', 'MarginBottom', 'HamburgerLine', 'Wrapper', 'Button', 'NavMenuLink'). "
         "2. ONLY output pure BUSINESS LOGIC and CONTENT entities (e.g. 'Services', 'TeamMembers', 'Testimonials', 'BlogPosts', 'Products'). "
-        "3. Since this is a dynamic website, you MUST also include Authentication-related models such as 'Users' (with email, password_hash) and 'Sessions' to support Login and Registration flows. "
+        "3. Infer only content supported by the evidence. Administration authentication is provided separately. "
         "Analyze the text, lists, and images to determine the core business models. Ignore all styling and layout elements. "
         "Each entity must have rich fields (e.g. title, description, image_url, price, author, date, slug, email, password_hash) and relational linkages. "
         "Return ONLY valid JSON with this exact shape: "
@@ -2306,7 +2359,11 @@ def infer_schema_node(state: ConversionState, llm: PromptLLM | None = None) -> C
             max_evidence_slices=max_evidence_slices,
         )
         try:
-            llm_response = llm.invoke(prompt)
+            from src.engine.schema_evidence import infer_all_pages
+            llm_response = infer_all_pages(html_pages, llm, lambda pages: _build_llm_schema_prompt(
+                pages, extracted_blocks, schema_rejection_feedback=state.get("schema_rejection_feedback"),
+                use_extracted_blocks=use_extracted_blocks, max_evidence_slices=max_evidence_slices),
+                _extract_json_payload)
             print(f"DEBUG: LLM Response Length: {len(llm_response)}")
             parsed = _extract_json_payload(llm_response)
             if parsed is not None:
@@ -2750,6 +2807,17 @@ def generate_artifacts_node(state: ConversionState, llm: PromptLLM | None = None
             "errors": errors,
         }
 
+    if state.get("crawled_page_map") or (state.get("crawl_artifacts") or {}).get("pages"):
+        from src.engine.preserved_site import generate_preserved_site
+        artifacts = generate_preserved_site(state)
+        report = {"quality_gate": "open", "page_count": artifacts["source_report"]["page_count"],
+                  "asset_count": artifacts["source_report"]["asset_count"], "issues": [],
+                  "inherited_gates": {"schema_quality_gate": schema_quality_gate, "scaffold_quality_gate": scaffold_quality_gate}}
+        trace_events = _append_quality_gate_event(state, node_name="generate_artifacts",
+                                                 gate_name="artifact_generation", report=report)
+        return {**state, "generated_artifacts": artifacts, "artifact_generation_report": report,
+                "trace_events": trace_events, "status": "generated"}
+
     schema = state.get("schema_proposal", {})
     entities = schema.get("entities", [])
 
@@ -2912,8 +2980,11 @@ Return a JSON object with this EXACT structure:
 Return ONLY raw JSON. No markdown code blocks."""
 
     # ── CALL 3: Generate Admin ──────────────────────────────────────────────
+    from src.engine.admin_design import ADMIN_DESIGN_REQUIREMENTS
     admin_prompt = f"""You are an expert React admin panel developer.
 Generate a COMPLETE admin panel with CRUD operations for managing the website's database entities.
+
+{ADMIN_DESIGN_REQUIREMENTS}
 
 REQUIREMENTS:
 1. Generate admin resource views for each entity with data tables, edit forms, and delete functionality.
@@ -3022,46 +3093,7 @@ Return ONLY raw JSON. No markdown code blocks."""
                 print(f"DEBUG [QUALITY]: All files have >200 chars of code. Looks good!")
 
     if not artifacts:
-        # Fallback heuristic generator if LLM fails or is missing
-        print("DEBUG [FALLBACK]: LLM generation failed completely. Using minimal fallback stubs.")
-        fallback_endpoints = [{"filename": f"routes/{e['slug']}.js", "code": "// LLM generation failed - placeholder"} for e in normalized_entities]
-        fallback_models = [{"filename": "prisma/schema.prisma", "code": "// LLM generation failed - placeholder"}]
-        fallback_pages = [{"filename": f"pages/{e['slug']}.jsx", "code": "// LLM generation failed - placeholder"} for e in normalized_entities]
-        fallback_resources = [{"filename": f"admin/{e['slug']}.jsx", "code": "// LLM generation failed - placeholder"} for e in normalized_entities]
-
-        artifacts = {
-            "backend": {
-                "endpoints": fallback_endpoints,
-                "models": fallback_models,
-                "health_check": {"filename": "routes/health.js", "code": "// fallback"},
-                "auth_middleware": {"filename": "middleware/auth.js", "code": "// fallback"},
-                "server_entry": {"filename": "server.js", "code": "// fallback"},
-                "package_json": {"filename": "package.json", "code": "{}"},
-                "seed_script": {"filename": "prisma/seed.js", "code": "// fallback"}
-            },
-            "frontend": {
-                "pages": fallback_pages,
-                "router": {"filename": "AppRouter.jsx", "code": "// fallback"},
-                "components": [{"filename": "components/Button.jsx", "code": "// fallback"}],
-                "styles": [{"filename": "styles/global.css", "code": "/* fallback */"}],
-                "package_json": {"filename": "package.json", "code": "{}"}
-            },
-            "admin": {
-                "resources": fallback_resources,
-                "dashboard": {"filename": "admin/Dashboard.jsx", "code": "// fallback"},
-                "auth_guard": {"filename": "admin/AuthGuard.jsx", "code": "// fallback"},
-                "crud_views": [{"filename": "admin/CrudTable.jsx", "code": "// fallback"}]
-            },
-            "deployment": {
-                "health_endpoint": "/health",
-                "backend_start_command": "npm run start",
-                "frontend_build_command": "npm run build",
-                "frontend_preview_command": "npm run preview",
-                "backend_runtime": "node>=18",
-            },
-        }
-
-
+        return {**state, "status": "failed", "errors": list(state.get("errors", [])) + ["Code generation failed; no runnable artifacts were produced."]}
     deployment = artifacts.get("deployment", {})
     required_deployment_keys = [
         "health_endpoint",
@@ -3164,6 +3196,13 @@ Return ONLY raw JSON. No markdown code blocks."""
 
 
 def validate_artifacts_node(state: ConversionState) -> ConversionState:
+    if (state.get("generated_artifacts") or {}).get("mode") == "preserved-source":
+        from src.engine.runtime_validation import validate_runtime
+        result = validate_runtime(state)
+        result["trace_events"] = _append_quality_gate_event(
+            result, node_name="validate_artifacts", gate_name="artifact_validation",
+            report=result["validation_report"])
+        return result
     artifacts = state.get("generated_artifacts", {})
     if not artifacts:
         errors = state.get("errors", []) + ["No artifacts found for validation."]
@@ -3391,8 +3430,8 @@ def validate_artifacts_node(state: ConversionState) -> ConversionState:
     has_blocker = any(issue["severity"] == "blocker" for issue in issues)
 
     report = {
-        "build_status": "passed" if not has_blocker else "failed",
-        "lint_status": "passed",
+        "build_status": "not_run",
+        "lint_status": "not_run",
         "validation_gate": "blocked" if has_blocker else "open",
         "deployment_ready": not has_blocker,
         "readiness_score": readiness_score,
@@ -3417,11 +3456,5 @@ def validate_artifacts_node(state: ConversionState) -> ConversionState:
             "errors": state.get("errors", []) + blocker_errors,
         }
 
-    return {
-        **state,
-        "validation_report": report,
-        "trace_events": trace_events,
-        "status": "validated",
-        "errors": state.get("errors", []),
-    }
-
+    from src.engine.runtime_validation import validate_runtime
+    return validate_runtime({**state, "trace_events": trace_events})

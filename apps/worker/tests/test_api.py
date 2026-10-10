@@ -1,5 +1,16 @@
 from fastapi.testclient import TestClient
 from src.api.main import app
+import pytest
+from src.api import main
+from src.engine.job_store import InMemoryJobStore
+
+
+@pytest.fixture(autouse=True)
+def isolate_api(monkeypatch):
+    monkeypatch.setattr(main.engine, "store", InMemoryJobStore())
+    async def skip_background(job_id):
+        pass
+    monkeypatch.setattr(main, "execute_real_conversion_job", skip_background)
 
 client = TestClient(app)
 
@@ -25,7 +36,7 @@ def test_create_job():
     job_id = data["job_id"]
     status_response = client.get(f"/api/jobs/{job_id}")
     assert status_response.status_code == 200
-    assert status_response.json()["job_id"] == job_id
+    assert status_response.json()["job"]["job_id"] == job_id
 
 def test_create_job_missing_args():
     # Neither url nor file_path provided
@@ -37,4 +48,4 @@ def test_create_job_missing_args():
 def test_get_invalid_job():
     response = client.get("/api/jobs/invalid-job-123")
     assert response.status_code == 404
-    assert response.json()["detail"] == "Job not found"
+    assert "Unknown job_id" in response.json()["detail"]

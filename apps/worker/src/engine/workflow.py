@@ -1,5 +1,5 @@
 """
-workflow.py — 100% resilient LangGraph conversion workflow.
+workflow.py — Staged LangGraph conversion workflow with explicit validation gates.
 
 Architecture (mirrors Figure_3_4_LangGraph_Orchestration.png):
 
@@ -130,12 +130,16 @@ def _route_after_crawl(state: ConversionState) -> str:
 
 
 def _route_after_sitemap(state: ConversionState) -> str:
+    if state.get("status") in {"failed", "cancelled"}:
+        return "END_CANCELLED"
     return "crawl_site" if state.get("status") == "retry_crawl" else "extract_content"
 
 
 def _route_after_extract(state: ConversionState) -> str:
     status = state.get("status")
     target_stage = state.get("target_stage") or ""
+    if status in {"failed", "cancelled"}:
+        return "END_CANCELLED"
     # Pause after Stage 1 (crawl & extract) unless stage2/schema inference explicitly requested
     if target_stage == "crawl" or (status in ("extracted", "crawled") and target_stage != "schema" and not state.get("schema_proposal")):
         return "END"
@@ -253,7 +257,10 @@ def build_conversion_workflow(
     graph.add_node("infer_candidates",  T("infer_candidates",  infer_candidates_node))
 
     # ── Phase 2: Schema ───────────────────────────────────────────────────────
-    graph.add_node("infer_schema",          T("infer_schema",         infer_node or infer_schema_node))
+    def _infer_schema_with_llm(state: ConversionState) -> ConversionState:
+        return infer_schema_node(state, llm=llm)
+
+    graph.add_node("infer_schema",          T("infer_schema",         infer_node or _infer_schema_with_llm))
     graph.add_node("schema_review_gate",    T("schema_review_gate",   schema_review_gate_node))
     graph.add_node("mint_schema_version",   T("mint_schema_version",  mint_schema_version_node))
 
@@ -294,7 +301,7 @@ def build_conversion_workflow(
     )
     graph.add_conditional_edges(
         "sitemap_gate", _route_after_sitemap,
-        {"extract_content": "extract_content", "crawl_site": "crawl_site"},
+        {"extract_content": "extract_content", "crawl_site": "crawl_site", "END_CANCELLED": "END_CANCELLED"},
     )
     graph.add_conditional_edges(
         "extract_content", _route_after_extract,

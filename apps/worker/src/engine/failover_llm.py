@@ -20,9 +20,9 @@ class LangChainChatAdapter:
         return getattr(response, "content", str(response))
 
 
-@dataclass
 class FailoverLLM:
-    models: list[PromptLLM]
+    def __init__(self, models=None, primary=None, secondary=None):
+        self.models = list(models) if models is not None else [model for model in (primary, secondary) if model is not None]
 
     def invoke(self, prompt: str) -> str:
         last_exception = None

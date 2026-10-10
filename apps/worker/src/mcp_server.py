@@ -69,7 +69,10 @@ def create_conversion_job_impl(
 
 def run_conversion_impl(job_id: str) -> dict[str, Any]:
     """Run the LangGraph conversion flow until validation or approval hold."""
-    return engine.run_job(job_id)
+    result = engine.run_job(job_id)
+    if result.get("status") == "crawled":
+        return engine.infer_schema_stage(job_id)
+    return result
 
 
 def submit_schema_decision_impl(job_id: str, decision: str) -> dict[str, Any]:

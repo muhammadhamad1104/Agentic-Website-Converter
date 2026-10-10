@@ -29,7 +29,7 @@ def test_validation_blocks_generic_entity_schema() -> None:
     assert any(issue["id"] == "semantic_entity_quality" for issue in result["validation_report"]["issues"])
 
 
-def test_validation_allows_semantic_entity_schema() -> None:
+def test_valid_metadata_without_runnable_files_cannot_pass_validation() -> None:
     state = {
         "schema_proposal": {
             "entities": [
@@ -56,8 +56,9 @@ def test_validation_allows_semantic_entity_schema() -> None:
     }
 
     result = validate_artifacts_node(state)
-    assert result["status"] == "validated"
-    assert result["validation_report"]["validation_gate"] == "open"
+    assert result["status"] == "failed"
+    assert result["validation_report"]["validation_gate"] == "blocked"
+    assert result["validation_report"]["build_status"] == "not_run"
 
 
 def test_validation_blocks_when_entity_endpoints_do_not_align() -> None:

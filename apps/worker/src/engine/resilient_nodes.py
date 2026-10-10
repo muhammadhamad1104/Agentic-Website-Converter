@@ -1,11 +1,11 @@
 """
-resilient_nodes.py — 100% self-healing node implementations for the
+resilient_nodes.py — Retry-aware node implementations for the
 LangGraph agentic conversion workflow.
 
 Every node:
   1. Never hard-terminates on a single failure — increments a retry counter
      and emits a structured error_context entry instead.
-  2. Computes a per-layer quality score (0–100).  Score 100 = perfect.
+  2. Computes structural completeness scores (0–100), not fidelity guarantees.
   3. Surfaces the "next action" via the `status` field that the router reads.
 
 Retry budget is controlled by `state["max_retries"]` (default 3).
@@ -201,7 +201,9 @@ def generate_backend_node(state: ConversionState, llm: 'PromptLLM | None' = None
         from src.engine.nodes import generate_artifacts_node
         try:
             gen_state = generate_artifacts_node({**state, "status": "template_ready"}, llm=llm)
-            state = {**state, "generated_artifacts": gen_state.get("generated_artifacts")}
+            state = {**state, **gen_state}
+            if gen_state.get("status") == "failed":
+                return cast(ConversionState, state)
         except Exception as exc:
             return cast(ConversionState, {**state,
                     "error_context": _add_error_context(
@@ -252,10 +254,10 @@ def generate_backend_node(state: ConversionState, llm: 'PromptLLM | None' = None
     if score < 100:
         ctx = _add_error_context(
             state, "generate_backend",
-            f"Backend quality {score:.1f}/100 after {max_r} retries. Proceeding with best effort.",
+            f"Backend quality {score:.1f}/100 after {max_r} retries. Generation blocked.",
             report,
         )
-        return cast(ConversionState, {**base, "error_context": ctx, "status": "backend_generated"})
+        return cast(ConversionState, {**base, "error_context": ctx, "status": "failed"})
 
     return cast(ConversionState, {**base, "status": "backend_generated"})
 
@@ -313,10 +315,10 @@ def generate_frontend_node(state: ConversionState) -> ConversionState:
     if score < 100:
         ctx = _add_error_context(
             state, "generate_frontend",
-            f"Frontend quality {score:.1f}/100 after {max_r} retries. Proceeding with best effort.",
+            f"Frontend quality {score:.1f}/100 after {max_r} retries. Generation blocked.",
             report,
         )
-        return cast(ConversionState, {**base, "error_context": ctx, "status": "frontend_generated"})
+        return cast(ConversionState, {**base, "error_context": ctx, "status": "failed"})
 
     return cast(ConversionState, {**base, "status": "frontend_generated"})
 
@@ -373,7 +375,7 @@ def generate_admin_node(state: ConversionState) -> ConversionState:
         return cast(ConversionState, {**base, "admin_retry_count": admin_retry + 1,
                 "error_context": ctx, "status": "admin_needs_retry"})
 
-    return cast(ConversionState, {**base, "status": "admin_generated"})
+    return cast(ConversionState, {**base, "status": "admin_generated" if score == 100 else "failed"})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -464,6 +466,8 @@ def validate_build_smoke_node(state: ConversionState) -> ConversionState:
         "overall_quality_score": overall,
     }
 
+    if (out_state.get("validation_report") or {}).get("validation_gate") != "open":
+        return cast(ConversionState, {**base, "status": "failed"})
     if overall >= 100.0:
         return cast(ConversionState, {**base, "status": "smoke_validated"})
 
@@ -489,10 +493,10 @@ def validate_build_smoke_node(state: ConversionState) -> ConversionState:
 
     ctx = _add_error_context(
         out_state, "validate_build_smoke",
-        f"Overall quality {overall:.1f}/100 after {max_r} retries. Proceeding with best effort.",
+        f"Overall quality {overall:.1f}/100 after {max_r} retries. Validation blocked.",
         smoke_report,
     )
-    return cast(ConversionState, {**base, "error_context": ctx, "status": "smoke_validated"})
+    return cast(ConversionState, {**base, "error_context": ctx, "status": "failed"})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -503,6 +507,8 @@ def validate_build_smoke_node(state: ConversionState) -> ConversionState:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def validation_review_gate_node(state: ConversionState) -> ConversionState:
+    if (state.get("validation_report") or {}).get("validation_gate") != "open":
+        return cast(ConversionState, {**state, "status": "failed"})
     decision = str(state.get("validation_review_decision") or "").strip()
 
     if decision == "cancelled":
@@ -550,13 +556,13 @@ def validation_review_gate_node(state: ConversionState) -> ConversionState:
             del out["generated_artifacts"]
         return cast(ConversionState, out)
 
-    # Warn and approve
+    # Incomplete validation remains blocked.
     ctx = _add_error_context(
         state, "validation_review_gate",
-        f"Overall quality {overall:.1f}/100 — approved with warnings.",
+        f"Overall quality {overall:.1f}/100 — validation incomplete.",
         smoke_report,
     )
-    return cast(ConversionState, {**state, "error_context": ctx, "status": "package_approved"})
+    return cast(ConversionState, {**state, "error_context": ctx, "status": "failed"})
 
 
 # ─────────────────────────────────────────────────────────────────────────────

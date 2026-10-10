@@ -1,0 +1,36 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "sqlite"
+  url = env("DATABASE_URL")
+}
+model SitePage {
+  id String @id
+  route String @unique
+  title String
+  html String
+  fields String
+  published Boolean @default(true)
+  updatedAt DateTime @updatedAt
+}
+model SiteRecord {
+  id String @id @default(cuid())
+  entity String
+  data String
+  updatedAt DateTime @updatedAt
+  @@index([entity])
+}
+model SiteAdmin {
+  id String @id @default(cuid())
+  email String @unique
+  passwordHash String
+}
+model SiteSession {
+  tokenHash String @id
+  expiresAt DateTime
+}
+model SiteSetting {
+  key String @id
+  value String
+}

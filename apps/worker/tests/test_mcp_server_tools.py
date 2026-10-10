@@ -23,9 +23,11 @@ class _FakeLLM:
                 """
 
 
-def test_mcp_tool_functions_work_end_to_end() -> None:
+def test_mcp_tool_functions_work_end_to_end(successful_runtime_build, monkeypatch) -> None:
     with patch("src.engine.service.ConversionEngine._build_failover_llm", return_value=_FakeLLM()):
         from src import mcp_server
+        from src.engine.job_store import InMemoryJobStore
+        monkeypatch.setattr(mcp_server.engine, "store", InMemoryJobStore())
 
         created = mcp_server.create_conversion_job_impl(
             html_pages=[
@@ -66,9 +68,9 @@ def test_mcp_tool_functions_work_end_to_end() -> None:
         trace_all = mcp_server.get_trace_events_impl(job_id)
         assert trace_all["trace_events"]
 
-        trace_filtered = mcp_server.get_trace_events_impl(job_id, node="approval_gate")
+        trace_filtered = mcp_server.get_trace_events_impl(job_id, node="schema_review_gate")
         assert trace_filtered["trace_events"]
-        assert all(event.get("node") == "approval_gate" for event in trace_filtered["trace_events"])
+        assert all(event.get("node") == "schema_review_gate" for event in trace_filtered["trace_events"])
 
         trace_limited = mcp_server.get_trace_events_impl(job_id, limit=2)
         assert len(trace_limited["trace_events"]) <= 2

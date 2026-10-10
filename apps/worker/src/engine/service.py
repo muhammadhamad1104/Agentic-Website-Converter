@@ -5,7 +5,7 @@ import importlib
 import shutil
 import time
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from src.config.settings import settings
@@ -59,7 +59,7 @@ class ConversionEngine:
                     api_key=settings.KIMI_API_KEY,
                     base_url="https://api.moonshot.ai/v1",
                     temperature=0.0,
-                    max_tokens=100000
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
                 )
                 models.append(LangChainChatAdapter(kimi))
             except Exception:
@@ -74,7 +74,7 @@ class ConversionEngine:
                     api_key=settings.DEEPSEEK_API_KEY,
                     base_url="https://api.deepseek.com/v1",
                     temperature=0.0,
-                    max_tokens=100000
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
                 )
                 models.append(LangChainChatAdapter(deepseek))
             except Exception:
@@ -88,7 +88,7 @@ class ConversionEngine:
                     model=getattr(settings, "OPENAI_MODEL", "gpt-4o-mini"), 
                     api_key=settings.OPENAI_API_KEY, 
                     temperature=0.0,
-                    max_tokens=100000
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
                 )
                 models.append(LangChainChatAdapter(openai))
             except Exception:
@@ -102,7 +102,7 @@ class ConversionEngine:
                     model=getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile"), 
                     api_key=settings.GROQ_API_KEY, 
                     temperature=0.0,
-                    max_tokens=100000
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
                 )
                 models.append(LangChainChatAdapter(groq))
             except Exception:
@@ -119,7 +119,7 @@ class ConversionEngine:
                     model=getattr(settings, "GEMINI_MODEL", "gemini-3.6-flash"),
                     google_api_key=settings.GEMINI_API_KEY,
                     temperature=0.0,
-                    max_tokens=100000
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
                 )
                 models.append(LangChainChatAdapter(gemini))
             except Exception:
@@ -134,7 +134,7 @@ class ConversionEngine:
                     api_key=settings.OPEN_SOURCE_API_KEY,
                     base_url=settings.OPEN_SOURCE_BASE_URL,
                     temperature=0.0,
-                    max_tokens=100000
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
                 )
                 models.append(LangChainChatAdapter(opensource))
             except Exception:
@@ -148,7 +148,7 @@ class ConversionEngine:
                     model="claude-3-5-sonnet-20240620", 
                     api_key=settings.ANTHROPIC_API_KEY, 
                     temperature=0.0,
-                    max_tokens=100000
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
                 )
                 models.append(LangChainChatAdapter(anthropic))
             except Exception:
@@ -162,6 +162,7 @@ class ConversionEngine:
     def _default_crawl_config(self) -> dict[str, Any]:
         return {
             "depth_limit": settings.CRAWL_DEPTH_LIMIT_DEFAULT,
+            "full_site": False,
             "max_pages": settings.CRAWL_MAX_PAGES_DEFAULT,
             "max_assets": settings.CRAWL_MAX_ASSETS_DEFAULT,
             "same_domain_only": settings.CRAWL_SAME_DOMAIN_ONLY_DEFAULT,
@@ -186,6 +187,7 @@ class ConversionEngine:
                 config[key] = value
 
         config["depth_limit"] = max(0, int(config["depth_limit"] or 0))
+        config["full_site"] = bool(config["full_site"])
         config["max_pages"] = max(0, int(config["max_pages"] or 0))
         config["max_assets"] = max(0, int(config["max_assets"] or 0))
         config["same_domain_only"] = bool(config["same_domain_only"])
@@ -255,12 +257,18 @@ class ConversionEngine:
 
         return status
 
-    def _validate_runtime_export_zip(self, zip_path: Path) -> list[str]:
+    def _validate_runtime_export_zip(self, zip_path: Path, require_complete: bool = True) -> list[str]:
         if not zip_path.is_file():
             return ["zip archive does not exist"]
 
         try:
             with zipfile.ZipFile(zip_path, "r") as archive:
+                for name in archive.namelist():
+                    path = PurePosixPath(name.replace("\\", "/"))
+                    if path.is_absolute() or ".." in path.parts or ":" in name:
+                        return ["zip archive contains an unsafe member path"]
+                if archive.testzip() is not None:
+                    return ["zip archive contains corrupt file data"]
                 member_names = [
                     name.replace("\\", "/").lstrip("./")
                     for name in archive.namelist()
@@ -278,7 +286,7 @@ class ConversionEngine:
         name_set = set(member_names)
 
         missing_required = [entry for entry in RUNTIME_REQUIRED_FILES if entry not in name_set]
-        if missing_required:
+        if missing_required and require_complete:
             preview = ", ".join(missing_required[:8])
             suffix = "..." if len(missing_required) > 8 else ""
             issues.append("zip archive is missing required runtime files: " + preview + suffix)
@@ -289,7 +297,7 @@ class ConversionEngine:
         if blocked_present:
             issues.append("zip archive includes non-runtime top-level entries: " + ", ".join(blocked_present))
 
-        if "backend" not in top_level_entries or "frontend" not in top_level_entries:
+        if require_complete and ("backend" not in top_level_entries or "frontend" not in top_level_entries):
             issues.append("zip archive must include backend and frontend directories")
 
         return issues
@@ -318,6 +326,8 @@ class ConversionEngine:
             raise ValueError(f"Unknown job_id: {job_id}")
         if decision not in {"approved", "rejected", "pending"}:
             raise ValueError("Decision must be one of: approved, rejected, pending")
+        if decision == "approved" and (not job.schema_proposal.get("entities") or job.schema_quality_report.get("quality_gate") != "open"):
+            raise ValueError("A valid schema proposal is required before approval")
         job.schema_decision = decision
         if feedback is not None:
             job.schema_rejection_feedback = feedback
@@ -327,6 +337,9 @@ class ConversionEngine:
         elif decision == "rejected":
             job.status = JobStatus.INFERRING_SCHEMA
             job.schema_proposal = {}
+            job.generated_artifacts = {}
+            job.validation_report = {}
+            job.schema_decision = "pending"
         else:
             job.status = JobStatus.AWAITING_APPROVAL
         self.store.save_job(job)
@@ -349,6 +362,9 @@ class ConversionEngine:
             "input_url": job.input_url or "",
             "html_pages": job.html_pages,
             "target_stage": target_stage or "",
+            "crawl_full_site": bool(crawl_config.get("full_site", False)),
+            "crawled_page_map": job.crawled_page_map,
+            "trace_events": job.trace_events,
             "crawl_depth_limit": int(crawl_config.get("depth_limit", settings.CRAWL_DEPTH_LIMIT_DEFAULT) or 0),
             "crawl_max_pages": int(crawl_config.get("max_pages", settings.CRAWL_MAX_PAGES_DEFAULT) or 0),
             "crawl_max_assets": int(crawl_config.get("max_assets", settings.CRAWL_MAX_ASSETS_DEFAULT) or 0),
@@ -401,7 +417,7 @@ class ConversionEngine:
         }
 
         try:
-            result = self.workflow.invoke(state)
+            result = self.workflow.invoke(state, {"recursion_limit": 100})
             job.crawl_config = crawl_config
             new_artifacts = result.get("crawl_artifacts") or {}
             if job.crawl_artifacts and new_artifacts:
@@ -433,7 +449,7 @@ class ConversionEngine:
             status_map = {
                 "crawled": JobStatus.CRAWLED,
                 "extracted": JobStatus.CRAWLED,
-                "cancelled": JobStatus.CRAWLED if not job.schema_proposal else JobStatus.AWAITING_APPROVAL,
+                "cancelled": JobStatus.FAILED,
                 "template_ready": JobStatus.APPROVED,
                 "generation_approved": JobStatus.APPROVED,
                 "backend_generated": JobStatus.GENERATED,
@@ -450,8 +466,6 @@ class ConversionEngine:
                 job.status = status_map[status]
             elif status in JobStatus._value2member_map_:
                 job.status = JobStatus(status)
-            elif result.get("generated_artifacts") or result.get("artifact_generation_report"):
-                job.status = JobStatus.VALIDATED
             elif job.schema_proposal and len(job.schema_proposal.get("entities", [])) > 0:
                 job.status = JobStatus.AWAITING_APPROVAL
             else:
@@ -526,6 +540,9 @@ class ConversionEngine:
             "html_pages": crawled_pages,
             "crawled_pages": crawled_pages,
             "target_stage": "schema",
+            "crawl_full_site": bool(crawl_config.get("full_site", False)),
+            "crawled_page_map": job.crawled_page_map,
+            "schema_rejection_feedback": job.schema_rejection_feedback,
             "crawl_depth_limit": int(crawl_config.get("depth_limit", settings.CRAWL_DEPTH_LIMIT_DEFAULT) or 0),
             "crawl_max_pages": int(crawl_config.get("max_pages", settings.CRAWL_MAX_PAGES_DEFAULT) or 0),
             "crawl_max_assets": int(crawl_config.get("max_assets", settings.CRAWL_MAX_ASSETS_DEFAULT) or 0),
@@ -608,7 +625,7 @@ class ConversionEngine:
             status = str(result.get("status", job.status.value)).lower()
             status_map = {
                 "extracted": JobStatus.CRAWLED,
-                "cancelled": JobStatus.CRAWLED if not job.schema_proposal else JobStatus.AWAITING_APPROVAL,
+                "cancelled": JobStatus.FAILED,
                 "schema_proposed": JobStatus.AWAITING_APPROVAL,
                 "awaiting_approval": JobStatus.AWAITING_APPROVAL,
                 "template_ready": JobStatus.APPROVED,
@@ -793,37 +810,21 @@ class ConversionEngine:
         report = job.validation_report or {}
         gate_status = report.get("validation_gate", "blocked")
         quality_cfg = settings.get_quality_gate_config()
-        if gate_status != "open":
-            issues = report.get("issues", [])
-            blocker_messages = [str(issue.get("message", "Validation blocker")) for issue in issues if issue.get("severity") == "blocker"]
-            detail = "; ".join(blocker_messages) if blocker_messages else "Validation gate is blocked."
-            logging.warning(f"Export validation bypassed: {detail}")
-
-        if bool(quality_cfg.get("export_require_deployment_ready", True)):
-            deployment_ready = bool(report.get("deployment_ready", False))
-            if not deployment_ready:
-                logging.warning("Export validation bypassed: deployment readiness checks are not satisfied.")
-
-            default_readiness = 100.0 if gate_status == "open" else 0.0
-            try:
-                readiness_score = float(report.get("readiness_score", default_readiness))
-            except Exception:
-                readiness_score = default_readiness
-            try:
-                min_required = float(
-                    report.get(
-                        "min_readiness_score_required",
-                        quality_cfg.get("validation_min_readiness_score", 80.0),
-                    )
-                )
-            except Exception:
-                min_required = float(quality_cfg.get("validation_min_readiness_score", 80.0))
-
-            if readiness_score < min_required:
-                logging.warning(
-                    f"Export validation bypassed: readiness score "
-                    f"{readiness_score:.2f} is below required threshold {min_required:.2f}."
-                )
+        if not job.generated_artifacts:
+            raise ValueError("No generated files are available to export yet.")
+        warnings = [str(issue.get("message", "Validation issue")) for issue in report.get("issues", [])]
+        warnings.extend(str(error) for error in (job.errors or []))
+        if gate_status != "open" or not report.get("deployment_ready"):
+            warnings.append("Validation did not confirm deployment readiness.")
+        if report.get("build_status") != "passed":
+            warnings.append("The generated runtime build has not passed.")
+        export_report = {
+            "policy": "best-effort", "validation_gate": gate_status,
+            "build_status": report.get("build_status", "not_run"),
+            "deployment_ready": bool(report.get("deployment_ready", False)),
+            "readiness_score": report.get("readiness_score", 0),
+            "issues": report.get("issues", []), "warnings": list(dict.fromkeys(warnings)),
+        }
 
         template_dir = (
             job.generated_artifacts.get("template_scaffold", {}).get("path", "")
@@ -859,6 +860,7 @@ class ConversionEngine:
                 asset_urls=asset_urls,
                 llm=self._llm,
                 generated_artifacts=job.generated_artifacts,
+                export_report=export_report,
             )
         except Exception as exc:
             raise RuntimeError(f"Failed to build export package: {exc}") from exc
@@ -897,14 +899,6 @@ class ConversionEngine:
             if project_dir.is_dir() and not readme_path.is_file():
                 package_issues.append("README.md missing from project_dir")
 
-            backend_pkg = backend_path / "package.json"
-            if backend_path.is_dir() and not backend_pkg.is_file():
-                package_issues.append("backend package.json missing")
-
-            frontend_pkg = frontend_path / "package.json"
-            if frontend_path.is_dir() and not frontend_pkg.is_file():
-                package_issues.append("frontend package.json missing")
-
             if not zip_path.is_file():
                 package_issues.append("zip archive does not exist")
             else:
@@ -915,7 +909,7 @@ class ConversionEngine:
                         f"zip archive size {zip_size} bytes is below required minimum {min_zip_bytes} bytes"
                     )
                 else:
-                    package_issues.extend(self._validate_runtime_export_zip(zip_path))
+                    package_issues.extend(self._validate_runtime_export_zip(zip_path, require_complete=False))
 
             if package_issues:
                 raise ValueError("Export prevented: generated package layout verification failed: " + "; ".join(package_issues))
@@ -932,6 +926,8 @@ class ConversionEngine:
             "schema_versions": self.get_schema_history(job_id),
             "artifact_versions": self.get_artifact_history(job_id),
             "export_status": "ready",
+            "quality_status": "warnings" if package_info.get("warnings", warnings) else "passed",
+            "warnings": package_info.get("warnings", warnings),
             "download": download_info,
         }
         return export_manifest

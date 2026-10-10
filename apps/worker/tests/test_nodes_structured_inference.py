@@ -74,13 +74,13 @@ def test_infer_schema_prefers_structured_llm_payload() -> None:
     assert any("structured json" in item.lower() for item in result["schema_proposal"]["assumptions"])
 
 
-def test_infer_schema_falls_back_when_llm_payload_invalid() -> None:
+def test_infer_schema_fails_without_fabricating_a_schema_when_payload_invalid() -> None:
     state = {"html_pages": [HTML_SAMPLE], "schema_decision": "pending", "errors": []}
     result = infer_schema_node(state, llm=_InvalidLLM())
 
-    assert result["status"] == "schema_proposed"
-    assert result["schema_proposal"]["entities"]
-    assert any("heuristic" in item.lower() for item in result["schema_proposal"]["assumptions"])
+    assert result["status"] == "failed"
+    assert not result.get("schema_proposal", {}).get("entities")
+    assert result["errors"]
 
 
 def test_infer_schema_uses_extracted_blocks_as_prompt_evidence() -> None:

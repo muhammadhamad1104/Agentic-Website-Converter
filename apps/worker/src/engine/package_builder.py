@@ -1,275 +1,216 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import shutil
+import zipfile
+from pathlib import Path, PurePosixPath
 from typing import Any
-import requests
-from urllib.parse import urlparse
-import logging
-import re
-from src.engine.failover_llm import FailoverLLM
+
+RUNTIME_REQUIRED_FILES = ["backend/package.json", "backend/src/index.js", "frontend/package.json",
+                          "frontend/index.html", "frontend/src/main.jsx", "runtime-manifest.json", "README.md"]
 
 
-RUNTIME_REQUIRED_FILES = []
+def _safe_path(root: Path, name: str) -> Path:
+    relative = PurePosixPath(name.replace("\\", "/"))
+    if not name or relative.is_absolute() or ".." in relative.parts or ":" in name:
+        raise ValueError(f"Unsafe artifact path: {name!r}")
+    path = (root / str(relative)).resolve()
+    if not path.is_relative_to(root.resolve()):
+        raise ValueError(f"Artifact escapes project directory: {name!r}")
+    return path
 
 
-def _safe_name(name: str) -> str:
-    return "".join(ch for ch in name.lower() if ch.isalnum() or ch in {"-", "_"}) or "entity"
+def write_runtime_project(project: Path, artifacts: dict[str, Any], job_id: str,
+                          export_report: dict[str, Any] | None = None) -> list[str]:
+    project.mkdir(parents=True, exist_ok=True)
+    best_effort = export_report is not None
+    warnings = list(export_report.get("warnings", [])) if best_effort else []
+    if best_effort:
+        (project / "backend").mkdir(exist_ok=True)
+        (project / "frontend").mkdir(exist_ok=True)
+    files: dict[str, bytes] = {}
 
-
-def _pascal_name(name: str) -> str:
-  tokens = [token for token in _safe_name(name).replace("-", "_").split("_") if token]
-  return "".join(token.capitalize() for token in tokens) or "Entity"
-
-
-def _write_text(path: Path, content: str) -> None:
-  path.parent.mkdir(parents=True, exist_ok=True)
-  path.write_text(content, encoding="utf-8")
-
-
-def _prepare_runtime_project_dir(project_dir: Path) -> None:
-  project_dir.mkdir(parents=True, exist_ok=True)
-
-  # Ensure export archive contains only runtime deliverables, not template leftovers.
-  for child in project_dir.iterdir():
-    if child.is_dir():
-      shutil.rmtree(child, ignore_errors=True)
-    else:
-      child.unlink(missing_ok=True)
-
-
-
-
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-def _download_assets(asset_urls: list[str], output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    def _download_single(url: str, session: requests.Session) -> None:
-        try:
-            parsed = urlparse(url)
-            filename = Path(parsed.path).name
-            if not filename:
+    def add(root, file, source=False):
+        if not isinstance(file, dict) or not isinstance(file.get("filename"), str):
+            if best_effort:
+                warnings.append("Skipped malformed generated file in " + root)
                 return
-            res = session.get(url, stream=True, timeout=10)
-            if res.status_code == 200:
-                with open(output_dir / filename, 'wb') as f:
-                    for chunk in res.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                logging.info(f"Downloaded asset: {filename}")
-        except Exception as e:
-            logging.warning(f"Failed to download asset {url}: {e}")
+            raise ValueError("Artifact must contain a filename and code")
+        filename = file["filename"]
+        if source and filename.startswith("src/"):
+            filename = filename[4:]
+        try:
+            path = _safe_path(project, root + "/" + filename)
+        except ValueError:
+            if best_effort:
+                warnings.append("Skipped unsafe generated path: " + root + "/" + filename)
+                return
+            raise
+        if any(part in {".git", "node_modules", "__pycache__"} or
+               (part == ".env" or part.startswith(".env.") and part != ".env.example")
+               for part in path.relative_to(project.resolve()).parts):
+            if best_effort:
+                warnings.append("Excluded private or non-runtime generated file: " + root + "/" + filename)
+                return
+            raise ValueError("Private or non-runtime artifact: " + filename)
+        code = file.get("code")
+        if not isinstance(code, str) or not code.strip():
+            if best_effort:
+                warnings.append("Skipped empty generated file: " + root + "/" + filename)
+                return
+            raise ValueError(f"Empty artifact: {filename}")
+        relative = str(path.relative_to(project.resolve())).replace("\\", "/")
+        content = code.encode("utf-8")
+        if relative in files and files[relative] != content:
+            if best_effort:
+                warnings.append("Conflicting generated file; retained first version: " + relative)
+                return
+            raise ValueError(f"Conflicting generated files: {relative}")
+        files[relative] = content
 
-    with requests.Session() as session:
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(_download_single, url, session) for url in asset_urls]
-            for _ in as_completed(futures):
-                pass
+    backend = artifacts.get("backend") or {}
+    frontend = artifacts.get("frontend") or {}
+    admin = artifacts.get("admin") or {}
+    for key in ("endpoints", "models", "files"):
+        for file in backend.get(key, []):
+            add("backend", file)
+    for key in ("health_check", "auth_middleware", "server_entry", "package_json", "seed_script"):
+        if backend.get(key): add("backend", backend[key])
+    for key in ("pages", "components", "styles"):
+        for file in frontend.get(key, []): add("frontend/src", file, source=True)
+    for key in ("router", "main_entry"):
+        if frontend.get(key): add("frontend/src", frontend[key], source=True)
+    for key in ("package_json", "index_html"):
+        if frontend.get(key):
+            file = frontend[key]
+            # These semantic slots belong at the frontend root, including legacy output.
+            expected = "package.json" if key == "package_json" else "index.html"
+            if best_effort and isinstance(file, dict) and isinstance(file.get("filename"), str) and Path(file["filename"]).name == expected:
+                file = {**file, "filename": expected}
+            add("frontend", file)
+    for file in frontend.get("files", []): add("frontend", file)
+    for key in ("resources", "crud_views"):
+        for file in admin.get(key, []): add("frontend/src", file, source=True)
+    for key in ("dashboard", "auth_guard"):
+        if admin.get(key): add("frontend/src", admin[key], source=True)
+    for asset in artifacts.get("source_assets", []):
+        if not isinstance(asset, dict) or not isinstance(asset.get("filename"), str):
+            if best_effort:
+                warnings.append("Skipped malformed captured asset")
+                continue
+            raise ValueError("Asset must contain a filename")
+        try:
+            target = _safe_path(project, "frontend/" + asset["filename"])
+        except ValueError:
+            if best_effort:
+                warnings.append("Skipped unsafe captured asset path: " + asset["filename"])
+                continue
+            raise
+        relative = str(target.relative_to(project.resolve())).replace("\\", "/")
+        try:
+            content = asset["code"].encode("utf-8") if "code" in asset else Path(asset["source"]).read_bytes()
+        except (OSError, KeyError, AttributeError) as error:
+            if best_effort:
+                warnings.append("Unavailable captured asset: " + relative + " (" + type(error).__name__ + ")")
+                continue
+            raise
+        if relative in files and files[relative] != content:
+            raise ValueError(f"Conflicting asset: {relative}")
+        files[relative] = content
+    manifest = {"job_id": job_id, "package_mode": "runtime-only", "source_report": artifacts.get("source_report", {}),
+                "required_files": RUNTIME_REQUIRED_FILES}
+    files["runtime-manifest.json"] = json.dumps(manifest, indent=2).encode()
+    files["README.md"] = b"""# Converted dynamic website
+
+Requirements: Node.js 20 or newer, npm.
+
+1. In backend/, run npm install and npm run setup. This automatically creates
+   backend/.env from .env.example if it does not already exist.
+2. For local setup, sign in with admin@gmail.com / admin123.
+   Before deployment, set ADMIN_EMAIL and a unique ADMIN_PASSWORD of at least
+   12 characters in backend/.env.
+3. In frontend/, run npm install and npm run build.
+4. In backend/, run npm start.
+
+Website: http://127.0.0.1:5000
+Admin: http://127.0.0.1:5000/admin
+Health: http://127.0.0.1:5000/health
+
+Changing admin credentials:
+Edit ADMIN_EMAIL and ADMIN_PASSWORD in backend/.env and restart the backend.
+The managed admin account is updated automatically, including email changes.
+Existing sessions are revoked when either credential changes.
+Shell/container environment variables override .env values.
+
+The default login is LOCAL ONLY: startup rejects it with NODE_ENV=production
+or HOST set to a non-loopback address. Do not expose it through a tunnel or
+reverse proxy. Set unique credentials and use HTTPS before publishing.
+Passwords are stored as salted scrypt hashes in the database. The .env file
+still contains the plaintext password: keep it private, never commit it,
+and restrict access. New .env files use owner-only permissions on Unix.
+Setup never overwrites an existing .env. It is excluded from export ZIPs;
+.env.example contains only the public local-setup defaults.
+
+The React public renderer loads captured pages from the Express server.
+Page content, publishing state, admin sessions and collection records persist
+in the Prisma SQLite database. Admin page edits appear on the public website
+after refresh. Original CSS, images, fonts and scripts are packaged locally.
+Source scripts and external integrations may still depend on third-party
+services; consult runtime-manifest.json for external and missing references.
+Collection records are separate from the captured page content fields.
+Forms and external services retain their original integrations; they are not
+automatically replaced with local form handlers, search or payment systems.
+Only run trusted captured scripts. Isolate previews from the converter and
+other authenticated applications.
+
+For development, run npm run dev in frontend/ while the backend is running.
+For deployment, set HOST=0.0.0.0 behind your HTTPS reverse proxy and persist
+backend/prisma/site.db and backend/uploads. Never publish .env.
+"""
+    accepted_failures = artifacts.get("source_report", {}).get("accepted_source_failures", [])
+    if accepted_failures:
+        files["README.md"] += ("\n## Accepted Source Warnings\n\n"
+                              "Export was explicitly approved with these unavailable source URLs.\n"
+                              "They were not repaired or replaced; affected behavior may remain unavailable.\n\n"
+                              + "\n".join("- " + url for url in accepted_failures) + "\n").encode("utf-8")
+    missing = set(RUNTIME_REQUIRED_FILES) - files.keys()
+    if missing and not best_effort:
+        raise ValueError("Missing required runtime files: " + ", ".join(sorted(missing)))
+    if best_effort:
+        if missing:
+            warnings.append("Incomplete runtime package; missing files: " + ", ".join(sorted(missing)))
+        export_report = {**export_report, "warnings": list(dict.fromkeys(warnings)), "missing_runtime_files": sorted(missing)}
+        manifest["export_report"] = export_report
+        files["runtime-manifest.json"] = json.dumps(manifest, indent=2).encode()
+        files["export-report.json"] = json.dumps(export_report, indent=2).encode()
+        files["README.md"] += ("\n## Export Status\n\n"
+                              "This is a best-effort source export, not a deployment guarantee.\n"
+                              "See export-report.json for build status and missing runtime files.\n\n"
+                              + "\n".join("- " + warning for warning in export_report["warnings"]) + "\n").encode("utf-8")
+    for relative, content in files.items():
+        target = _safe_path(project, relative)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    return sorted(files)
 
 
-
-def build_dynamic_site_package(
-
-    job_id: str,
-    schema: dict[str, Any],
-    output_root: str,
-    template_dir: str | None = None,
-    input_url: str | None = None,
-    crawled_pages: dict[str, str] | None = None,
-    asset_urls: list[str] | None = None,
-    llm: FailoverLLM | None = None,
-    generated_artifacts: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    base = Path(output_root)
-    if template_dir:
-        project_dir = Path(template_dir).resolve()
-    else:
-        project_dir = (base / f"website_template_{job_id[:8]}").resolve()
-
-    # Keep a single generated project folder (template-based), and only produce a zip next to it.
-    zip_path = project_dir.with_suffix(".zip")
-
-    _prepare_runtime_project_dir(project_dir)
-
-    entities = schema.get("entities", [])
-    entity_names = [_safe_name(str(entity.get("name", "entity"))) for entity in entities]
-    if not entity_names:
-        entity_names = ["navigation", "page", "site"]
-
-    url = input_url or "https://www.nowwadvisory.co.nz"
-    domain = url.replace("https://", "").replace("http://", "").split("/")[0]
-    brand_name = "NOWW Advisory" if "noww" in domain.lower() else domain.replace("www.", "").split(".")[0].replace("-", " ").title()
-    site_title = f"{brand_name} - Strategic Commercial Property & Tenant Representation"
-    site_desc = f"Your end-to-end partner for commercial and workplace success. At {brand_name}, results don’t come at the cost of relationships."
-
-    page_list_md = "\n".join([f"- `{path}`" for path in (crawled_pages.keys() if crawled_pages else [])]) or "- Home (`/`)"
-    entity_list_md = "\n".join([f"- `{name}`" for name in entity_names])
-
-    _write_text(
-        project_dir / "README.md",
-        (
-            f"# Converted Dynamic Full-Stack Application\n\n"
-            f"This package was automatically synthesized from your converted static website structure (**{url}**). "
-            f"It includes a complete **Node.js Express Backend** (with Prisma ORM and SQLite/PostgreSQL) and a **React Single-Page Application (Frontend)**.\n\n"
-            f"---\n\n"
-            f"## 📊 Conversion Summary\n"
-            f"- **Source URL**: {url}\n"
-            f"- **Generated Pages**:\n{page_list_md}\n"
-            f"- **Inferred Database Entities ({len(entity_names)})**:\n{entity_list_md}\n\n"
-            f"---\n\n"
-            f"## 📋 Requirements\n"
-            f"- **Node.js**: `v18.0.0` or higher (v20+ recommended)\n"
-            f"- **npm**: `v9.0.0` or higher\n\n"
-            f"---\n\n"
-            f"## 🚀 How to Run the Application\n\n"
-            f"### 1. Start the Backend API Server\n"
-            f"```bash\n"
-            f"# Navigate to backend directory\n"
-            f"cd backend\n\n"
-            f"# Install backend dependencies\n"
-            f"npm install\n\n"
-            f"# Start the backend development server\n"
-            f"npm run dev\n"
-            f"```\n"
-            f"* **Backend API Base URL**: `http://localhost:5000` (or port specified in `backend/.env`)\n"
-            f"* **Health Check Endpoint**: `http://localhost:5000/api/health`\n\n"
-            f"### 2. Start the Frontend Web Application\n"
-            f"```bash\n"
-            f"# Open a new terminal and navigate to frontend directory\n"
-            f"cd frontend\n\n"
-            f"# Install frontend dependencies\n"
-            f"npm install\n\n"
-            f"# Start the React Vite development server\n"
-            f"npm run dev\n"
-            f"```\n"
-            f"* **Frontend Web Application**: `http://localhost:5173` (or `http://localhost:3000`)\n\n"
-            f"---\n\n"
-            f"## 📁 Project Structure Overview\n\n"
-            f"```\n"
-            f"project-root/\n"
-            f"├── README.md               <-- Getting Started & Instructions\n"
-            f"├── backend/                <-- Node.js Express REST API\n"
-            f"│   ├── src/\n"
-            f"│   │   ├── controllers/    <-- Request Handlers\n"
-            f"│   │   ├── routes/         <-- REST Express Routes\n"
-            f"│   │   └── server.ts       <-- Server Entry Point\n"
-            f"│   ├── prisma/             <-- Database Schema & Models\n"
-            f"│   └── package.json\n"
-            f"└── frontend/               <-- React + Vite Web Application\n"
-            f"    ├── src/\n"
-            f"    │   ├── components/     <-- Extracted UI Components\n"
-            f"    │   ├── pages/          <-- Crawled & Converted Pages\n"
-            f"    │   ├── services/       <-- API Service Client\n"
-            f"    │   └── App.tsx         <-- Main Router & App Shell\n"
-            f"    └── package.json\n"
-            f"```\n\n"
-            f"---\n\n"
-            f"## ⚙️ Architecture & Features\n"
-            f"- **Type-Safe Database Models**: Auto-generated Prisma ORM schema.\n"
-            f"- **Dynamic REST API**: CRUD endpoints for inferred models.\n"
-            f"- **Modular React UI**: Components structured from extracted layout tree.\n"
-        ),
-    )
-
-    if generated_artifacts:
-        logging.info("Writing AI-generated fullstack artifacts to disk...")
-        
-        # Write Backend files
-        backend_artifacts = generated_artifacts.get("backend", {})
-        backend_dir = project_dir / "backend"
-        for endpoint in backend_artifacts.get("endpoints", []):
-            _write_text(backend_dir / endpoint.get("filename", ""), endpoint.get("code", ""))
-        for model in backend_artifacts.get("models", []):
-            _write_text(backend_dir / model.get("filename", ""), model.get("code", ""))
-            
-        health_check = backend_artifacts.get("health_check")
-        if health_check:
-            _write_text(backend_dir / health_check.get("filename", ""), health_check.get("code", ""))
-            
-        auth_middleware = backend_artifacts.get("auth_middleware")
-        if auth_middleware:
-            _write_text(backend_dir / auth_middleware.get("filename", ""), auth_middleware.get("code", ""))
-            
-        server_entry = backend_artifacts.get("server_entry")
-        if server_entry:
-            _write_text(backend_dir / server_entry.get("filename", ""), server_entry.get("code", ""))
-            
-        package_json = backend_artifacts.get("package_json")
-        if package_json:
-            _write_text(backend_dir / package_json.get("filename", ""), package_json.get("code", ""))
-            
-        seed_script = backend_artifacts.get("seed_script")
-        if seed_script:
-            _write_text(backend_dir / seed_script.get("filename", ""), seed_script.get("code", ""))
-            
-        # Write Frontend files
-        frontend_artifacts = generated_artifacts.get("frontend", {})
-        frontend_dir = project_dir / "frontend"
-        for page in frontend_artifacts.get("pages", []):
-            _write_text(frontend_dir / "src" / page.get("filename", ""), page.get("code", ""))
-        for component in frontend_artifacts.get("components", []):
-            _write_text(frontend_dir / "src" / component.get("filename", ""), component.get("code", ""))
-        for style in frontend_artifacts.get("styles", []):
-            _write_text(frontend_dir / "src" / style.get("filename", ""), style.get("code", ""))
-            
-        router = frontend_artifacts.get("router")
-        if router:
-            _write_text(frontend_dir / "src" / router.get("filename", ""), router.get("code", ""))
-            
-        f_package_json = frontend_artifacts.get("package_json")
-        if f_package_json:
-            _write_text(frontend_dir / f_package_json.get("filename", ""), f_package_json.get("code", ""))
-        
-        # Write index.html and main.jsx if provided by LLM
-        index_html = frontend_artifacts.get("index_html")
-        if index_html:
-            _write_text(frontend_dir / index_html.get("filename", "index.html"), index_html.get("code", ""))
-        
-        main_entry = frontend_artifacts.get("main_entry")
-        if main_entry:
-            _write_text(frontend_dir / "src" / main_entry.get("filename", "main.jsx"), main_entry.get("code", ""))
-
-        # Write Admin files
-        admin_artifacts = generated_artifacts.get("admin", {})
-        for resource in admin_artifacts.get("resources", []):
-            _write_text(frontend_dir / "src" / resource.get("filename", ""), resource.get("code", ""))
-        for view in admin_artifacts.get("crud_views", []):
-            _write_text(frontend_dir / "src" / view.get("filename", ""), view.get("code", ""))
-            
-        dashboard = admin_artifacts.get("dashboard")
-        if dashboard:
-            _write_text(frontend_dir / "src" / dashboard.get("filename", ""), dashboard.get("code", ""))
-            
-        auth_guard = admin_artifacts.get("auth_guard")
-        if auth_guard:
-            _write_text(frontend_dir / "src" / auth_guard.get("filename", ""), auth_guard.get("code", ""))
-    else:
-        logging.warning("No generated_artifacts provided. The codebase will be empty.")
-
-    if asset_urls:
-        _download_assets(asset_urls, project_dir / "frontend" / "public" / "assets")
-
-    runtime_manifest = {
-      "job_id": job_id,
-      "package_mode": "runtime-only",
-      "entity_count": len(entity_names),
-      "entities": entity_names,
-      "required_files": RUNTIME_REQUIRED_FILES,
-    }
-    _write_text(project_dir / "runtime-manifest.json", json.dumps(runtime_manifest, indent=2) + "\n")
-
-    if zip_path.exists():
-        zip_path.unlink()
-    archive_base = str(zip_path.with_suffix(""))
-    shutil.make_archive(archive_base, "zip", root_dir=project_dir)
-
-    return {
-        "project_dir": str(project_dir),
-        "zip_path": str(zip_path),
-        "package_mode": "runtime-only",
-        "entity_count": len(entity_names),
-        "entities": entity_names,
-      "frontend_path": str(project_dir / "frontend"),
-      "backend_path": str(project_dir / "backend"),
-    }
+def build_dynamic_site_package(job_id: str, schema: dict[str, Any], output_root: str,
+                               template_dir: str | None = None, input_url: str | None = None,
+                               crawled_pages=None, asset_urls=None, llm=None, generated_artifacts=None,
+                               export_report: dict[str, Any] | None = None):
+    if not generated_artifacts:
+        raise ValueError("No generated artifacts to export")
+    base = Path(output_root).resolve()
+    project = (base / ("website_" + "".join(c for c in job_id if c.isalnum() or c == "-"))).resolve()
+    members = write_runtime_project(project, generated_artifacts, job_id, export_report=export_report)
+    archive_path = project.with_suffix(".zip")
+    temporary = archive_path.with_suffix(".zip.tmp")
+    with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
+        for member in members:
+            archive.write(project / member, member)
+    temporary.replace(archive_path)
+    return {"project_dir": str(project), "zip_path": str(archive_path), "package_mode": "runtime-only",
+            "backend_path": str(project / "backend"), "frontend_path": str(project / "frontend"),
+            "warnings": json.loads((project / "export-report.json").read_text())["warnings"] if export_report is not None else [],
+            "entity_count": len(schema.get("entities", [])),
+            "entities": [entity["name"] for entity in schema.get("entities", [])]}

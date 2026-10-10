@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
+    PREVIEW_API_SECRET: str = ""
     
     # LLM
     KIMI_API_KEY: str = ""
@@ -25,6 +26,7 @@ class Settings(BaseSettings):
     OPEN_SOURCE_BASE_URL: str = ""
     ANTHROPIC_API_KEY: str = ""
     DEFAULT_LLM_MODEL: str = "gpt-4o-mini"
+    LLM_MAX_OUTPUT_TOKENS: int = 8192
     
     # Database
     DATABASE_URL: str = ""
