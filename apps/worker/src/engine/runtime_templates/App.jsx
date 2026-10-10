@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Save, LogOut, ExternalLink, Plus, Trash2, Upload, FileText, Image, Database, LockKeyhole, ArrowRight, Eye, EyeOff, ShieldAlert, Loader2, LayoutDashboard, Search, ChevronRight, ArrowLeft, Copy, Pencil, Check, X, Menu, Globe, FolderOpen, File, Video, Music } from 'lucide-react';
+import { Save, LogOut, ExternalLink, Plus, Trash2, Upload, FileText, Image, Database, LockKeyhole, ArrowRight, Eye, EyeOff, ShieldAlert, ShieldCheck, Loader2, LayoutDashboard, Search, ChevronRight, ArrowLeft, Copy, Pencil, Check, X, Menu, Globe, FolderOpen, File, Music, Layers3 } from 'lucide-react';
 import './style.css';
 
 const sections = [['overview', 'Overview', LayoutDashboard], ['pages', 'Pages', FileText], ['media', 'Media library', Image], ['collections', 'Collections', Database]];
@@ -35,7 +35,7 @@ function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [defaultCredentials, setDefaultCredentials] = useState(false);
-  const [site, setSite] = useState({ siteTitle: 'Your website' });
+  const [site, setSite] = useState({ siteTitle: 'Your website', coverImage: '' });
   const uploadInput = useRef(null);
 
   useEffect(() => {
@@ -132,8 +132,14 @@ function App() {
   }
 
   if (!token) return <div className="login-shell">
-    <header className="login-header"><span className="admin-wordmark"><LockKeyhole size={19} /> Site administration</span><a href="/"><ExternalLink size={15} />View website</a></header>
-    <main className="login"><div className="login-emblem"><LockKeyhole size={25} /></div><p className="site-name">{site.siteTitle}</p><h1>Welcome back</h1>
+    <aside className="login-showcase">
+      <a className="login-brand" href="/"><span className="login-brand-mark"><Layers3 size={21} /></span><span>Site administration</span></a>
+      {site.coverImage ? <figure className="login-art"><img src={site.coverImage} alt="" /><figcaption>{site.siteTitle}</figcaption></figure> :
+        <div className="login-art login-art-empty"><Layers3 size={54} strokeWidth={1} /><span>{site.siteTitle}</span></div>}
+      <div className="login-showcase-footer"><span><ShieldCheck size={15} />Protected workspace</span><span>Content / Media / Collections</span></div>
+    </aside>
+    <main className="login-panel"><header className="login-mobile-header"><span className="admin-wordmark"><Layers3 size={19} />Site administration</span><a href="/"><ExternalLink size={15} />View website</a></header>
+      <section className="login"><div className="login-emblem"><LockKeyhole size={24} /></div><p className="site-name">Administration</p><h1>{site.siteTitle}</h1><p className="login-intro">Sign in to manage your website.</p>
       <form onSubmit={event => {
         event.preventDefault(); const data = new FormData(event.currentTarget);
         act(async () => { const result = await api('/login', { method: 'POST', body: JSON.stringify(Object.fromEntries(data)) });
@@ -147,13 +153,14 @@ function App() {
         {error && <p className="notice error" role="alert">{error}</p>}
         <button className="primary sign-in" disabled={busy}>{busy ? <Loader2 size={18} className="spin" /> : <LockKeyhole size={16} />}{busy ? 'Signing in' : 'Sign in'}<ArrowRight size={17} /></button>
       </form>
-    </main><footer className="login-footer">Website administration</footer>
+      </section>
+    </main>
   </div>;
 
   return <div className="admin-shell">
     {sidebarOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
     <aside className={'sidebar ' + (sidebarOpen ? 'open' : '')}>
-      <div className="workspace-brand"><span className="brand-mark">{site.siteTitle.charAt(0).toUpperCase()}</span><div><strong>{site.siteTitle}</strong><small>Website workspace</small></div>
+      <div className="workspace-brand"><span className="brand-mark"><Layers3 size={19} /></span><div><strong>{site.siteTitle}</strong><small>Content workspace</small></div>
         <button className="icon-button mobile-only" title="Close navigation" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
       <p className="nav-label">Workspace</p>
       <nav aria-label="Admin sections">{sections.map(([name, title, Icon]) => <button key={name} aria-current={view === name ? 'page' : undefined} disabled={busy} onClick={() => changeView(name)}>
@@ -168,7 +175,7 @@ function App() {
     <div className="admin-main">
       <header className="topbar"><button className="icon-button mobile-only" title="Open navigation" aria-label="Open navigation" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
         <div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{currentSection[1]}</strong>{page && <><ChevronRight size={14} /><span className="breadcrumb-page">{page.title}</span></>}</div>
-        <a href="/" target="_blank" rel="noreferrer" className="button quiet"><ExternalLink size={15} /><span>View website</span></a></header>
+        <div className="topbar-actions"><span className="session-state"><span />Secure session</span><a href="/" target="_blank" rel="noreferrer" className="button quiet"><ExternalLink size={15} /><span>View website</span></a></div></header>
       <main className="main-content" aria-busy={busy}>
         {defaultCredentials && <p className="notice warning" role="status"><ShieldAlert size={17} />Default admin password active. Local setup only.</p>}
         {error && <p className="notice error" role="alert">{error}</p>}
@@ -263,7 +270,6 @@ function App() {
             </> : <div className="empty-state"><Database size={30} /><h3>{schema.entities.length ? 'No collection selected' : 'No collections'}</h3></div>}</section>
           </div>
         </>}
-        <footer className="workspace-footer"><span>{site.siteTitle}</span><span>Content workspace</span></footer>
       </main>
     </div>
   </div>;

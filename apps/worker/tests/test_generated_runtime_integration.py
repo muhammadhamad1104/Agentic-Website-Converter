@@ -163,7 +163,9 @@ def test_admin_edits_uploads_records_and_deletions_survive_restart(tmp_path, mon
     local_env["NODE_ENV"] = "development"
     with running_site(project, local_env) as base:
         config = requests.get(base + "/api/admin/config").json()
-        assert set(config) == {"siteTitle"}
+        assert set(config) == {"siteTitle", "coverImage"}
+        assert config["coverImage"].startswith("/assets/")
+        assert requests.get(base + config["coverImage"]).ok
         assert requests.get(base + "/api/admin/account").status_code == 401
         credentials = {"email": "admin@gmail.com", "password": "admin123"}
         login = requests.post(base + "/api/admin/login", json=credentials)
@@ -206,7 +208,7 @@ def test_admin_edits_uploads_records_and_deletions_survive_restart(tmp_path, mon
     environment_file.write_text(replacement)
     with running_site(project, local_env) as base:
         assert environment_file.read_text() == replacement
-        assert set(requests.get(base + "/api/admin/config").json()) == {"siteTitle"}
+        assert set(requests.get(base + "/api/admin/config").json()) == {"siteTitle", "coverImage"}
         assert requests.post(base + "/api/admin/login", json=credentials).status_code == 401
         assert requests.get(base + "/api/admin/pages", headers=default_headers).status_code == 401
         replacement_login = requests.post(base + "/api/admin/login", json={

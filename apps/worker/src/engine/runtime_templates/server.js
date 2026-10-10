@@ -66,6 +66,7 @@ app.post('/api/admin/logout', authorize, wrap(async (req, res) => {
 app.get('/health', wrap(async (req, res) => { await db.$queryRaw`SELECT 1`; res.json({ status: 'ok' }); }));
 app.get('/api/admin/config', (req, res) => res.json({
   siteTitle: seed.pages.find(page => page.route === seed.homeRoute)?.title || 'Your website',
+  coverImage: seed.media.find(item => String(item.type).startsWith('image/'))?.url || '',
 }));
 app.get('/api/admin/account', authorize, (req, res) => res.json({ defaultCredentials }));
 app.get('/api/admin/schema', authorize, (req, res) => res.json(seed.schema));
