@@ -30,6 +30,7 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
+    if (axios.isCancel(error)) return Promise.reject(error);
     let message =
       error.response?.data?.message ||
       error.response?.data?.error ||
@@ -42,6 +43,10 @@ api.interceptors.response.use(
     }
 
     if (error.response?.status === 401) {
+      const currentToken = localStorage.getItem('token');
+      const requestAuthorization = error.config?.headers?.Authorization;
+      // A response from a revoked session must not discard a newly rotated session.
+      if (requestAuthorization !== (currentToken ? 'Bearer ' + currentToken : undefined)) return Promise.reject(error);
       localStorage.removeItem('token');
       useAuthStore.setState({ user: null, isAuthenticated: false, token: null });
       // Only redirect if not already on login or register pages
@@ -56,6 +61,7 @@ api.interceptors.response.use(
     }
 
     if (error.response?.status !== 401) {
+      if (error.config?.method === 'put' && error.config?.url?.includes('/preview/')) return Promise.reject(error);
       toast.error(message, { duration: 4000 });
     }
 

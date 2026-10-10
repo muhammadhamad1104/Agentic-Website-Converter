@@ -1,0 +1,4 @@
+.cinematic-canvas { width: 100%; height: 100%; overflow: hidden; }
+.cinematic-canvas canvas { display: block; }
+.cinematic-canvas .scene-fallback { width: 100%; height: 100%; display: grid; place-items: center; padding: 12%; }
+.cinematic-canvas .scene-fallback img { width: 85%; aspect-ratio: 1.6; object-fit: cover; transform: perspective(900px) rotateY(-18deg); }

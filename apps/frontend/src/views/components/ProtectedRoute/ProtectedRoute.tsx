@@ -1,6 +1,8 @@
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../../store/authStore';
+import BrandMark from '../BrandMark/BrandMark';
+import './ProtectedRoute.css';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -12,20 +14,9 @@ export default function ProtectedRoute({ children, requireAdmin = false }: Prote
   const location = useLocation();
 
   // If initial auth token check is in progress
-  if (isLoading) {
+  if (isLoading && !isAuthenticated) {
     return (
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '100vh',
-        background: '#090d16',
-        color: '#818cf8',
-        fontFamily: 'monospace',
-        fontSize: '14px'
-      }}>
-        Authenticating session...
-      </div>
+      <main className="session-loading" role="status" aria-label="Authenticating session"><BrandMark size={40} /><span>Agentic Converter</span><div className="session-loading-line" /><p>Authenticating session...</p></main>
     );
   }
 
@@ -36,7 +27,7 @@ export default function ProtectedRoute({ children, requireAdmin = false }: Prote
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   }
 
-  if (requireAdmin && user?.role !== 'ADMIN' && user?.role !== 'OWNER') {
+  if (requireAdmin && user?.role !== 'ADMIN') {
     return <Navigate to="/dashboard" replace />;
   }
 

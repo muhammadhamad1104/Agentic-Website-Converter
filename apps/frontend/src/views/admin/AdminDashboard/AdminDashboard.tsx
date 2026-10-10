@@ -1,124 +1,29 @@
-import { motion } from 'framer-motion';
-import { Cpu, Users, Activity, HardDrive, ShieldAlert } from 'lucide-react';
-import Navbar from '../../components/Navbar/Navbar';
-import Scene3D from '../../components/Scene3D/Scene3D';
-import { fadeInUp, staggerContainer } from '@design/animations';
-import './AdminDashboard.css';
+import { Link } from 'react-router-dom';
+import * as Tabs from '@radix-ui/react-tabs';
+import { RefreshCw, ArrowUpRight, ShieldCheck, FolderOpen, CircleAlert } from 'lucide-react';
+import { useResource, duration } from '../../../hooks/useResource';
+import { Workspace, Metrics, Status, LoadError } from '../../components/Workspace/Workspace';
 
+type Summary = { stats: { users: number; sites: number; jobs: number; failedJobs: number; activeJobs: number; averageDurationMs: number | null; timedConversions: number }; recentUsers: any[]; recentJobs: any[]; plans: { plan: string; _count: number }[] };
 export default function AdminDashboard() {
-  return (
-    <div className="admin-page" style={{ position: 'relative', minHeight: '100vh' }}>
-      <Scene3D />
-      <div style={{ position: 'relative', zIndex: 1 }}>
-        <Navbar />
-        
-        <main className="admin-main container">
-          <div className="admin-header">
-            <div>
-              <h1 className="text-3xl font-bold text-white mb-2">Admin Dashboard</h1>
-              <p className="text-gray-400">System overview and analytics</p>
-            </div>
-          </div>
-
-          <motion.div 
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12"
-            variants={staggerContainer}
-            initial="hidden"
-            animate="visible"
-          >
-            <motion.div className="glass p-6 rounded-2xl flex flex-col gap-4 border-t-4 border-t-indigo-500" variants={fadeInUp}>
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="text-gray-400 font-medium mb-1">Total Users</h3>
-                  <p className="text-3xl font-bold text-white">1,248</p>
-                </div>
-                <div className="w-10 h-10 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
-                  <Users size={20} />
-                </div>
-              </div>
-              <div className="text-sm text-indigo-300">+12% from last month</div>
-            </motion.div>
-
-            <motion.div className="glass p-6 rounded-2xl flex flex-col gap-4 border-t-4 border-t-indigo-400" variants={fadeInUp}>
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="text-gray-400 font-medium mb-1">Jobs Processed</h3>
-                  <p className="text-3xl font-bold text-white">8,432</p>
-                </div>
-                <div className="w-10 h-10 rounded-lg bg-indigo-500/15 text-indigo-300 flex items-center justify-center">
-                  <Activity size={20} />
-                </div>
-              </div>
-              <div className="text-sm text-indigo-300">+24% from last month</div>
-            </motion.div>
-
-            <motion.div className="glass p-6 rounded-2xl flex flex-col gap-4 border-t-4 border-t-indigo-300" variants={fadeInUp}>
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="text-gray-400 font-medium mb-1">Agent Memory</h3>
-                  <p className="text-3xl font-bold text-white">42%</p>
-                </div>
-                <div className="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-300 flex items-center justify-center">
-                  <HardDrive size={20} />
-                </div>
-              </div>
-              <div className="text-sm text-gray-400">1.2 TB available</div>
-            </motion.div>
-
-            <motion.div className="glass p-6 rounded-2xl flex flex-col gap-4 border-t-4 border-t-indigo-200" variants={fadeInUp}>
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="text-gray-400 font-medium mb-1">Failed Jobs</h3>
-                  <p className="text-3xl font-bold text-white">24</p>
-                </div>
-                <div className="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-200 flex items-center justify-center">
-                  <ShieldAlert size={20} />
-                </div>
-              </div>
-              <div className="text-sm text-indigo-200/60">-5% from last month</div>
-            </motion.div>
-          </motion.div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="glass rounded-2xl p-6">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-bold text-white">Agent Load</h2>
-                <Cpu className="text-gray-400" />
-              </div>
-              <div className="h-64 flex items-center justify-center border border-dashed border-gray-700 rounded-xl text-gray-500">
-                Recharts Area Chart Goes Here
-              </div>
-            </div>
-            
-            <div className="glass rounded-2xl p-6">
-              <h2 className="text-xl font-bold text-white mb-6">Recent Users</h2>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-gray-800">
-                      <th className="py-3 px-4 text-gray-400 font-medium">User</th>
-                      <th className="py-3 px-4 text-gray-400 font-medium">Joined</th>
-                      <th className="py-3 px-4 text-gray-400 font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b border-gray-800/50 hover:bg-gray-800/20 transition-colors">
-                      <td className="py-3 px-4 text-white">alice@example.com</td>
-                      <td className="py-3 px-4 text-gray-400">2 mins ago</td>
-                      <td className="py-3 px-4"><span className="status-badge status-completed">Active</span></td>
-                    </tr>
-                    <tr className="border-b border-gray-800/50 hover:bg-gray-800/20 transition-colors">
-                      <td className="py-3 px-4 text-white">bob@corp.io</td>
-                      <td className="py-3 px-4 text-gray-400">1 hour ago</td>
-                      <td className="py-3 px-4"><span className="status-badge status-completed">Active</span></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </main>
-      </div>
-    </div>
-  );
+  const { data, error, loading, refresh } = useResource<Summary>('/admin/summary', 15000);
+  const accountCount = data?.plans.reduce((total, plan) => total + plan._count, 0) || 0;
+  return <Workspace><div className="workspace-title"><div><h1>System <em>overview.</em></h1></div><div className="workspace-actions"><Link className="btn btn-secondary" to="/profile#security"><ShieldCheck size={15} />Account security</Link><button className="icon-control" title="Refresh system data" aria-label="Refresh system data" onClick={refresh}><RefreshCw size={15} /></button></div></div>
+    {error && <LoadError error={error} retry={refresh} />}{loading && !data && <div className="loading-line" aria-label="Loading system data" role="status" />}
+    <Metrics items={[{ label: 'Accounts', value: data?.stats.users ?? '--' }, { label: 'Conversion jobs', value: data?.stats.jobs ?? '--' }, { label: 'Active jobs', value: data?.stats.activeJobs ?? '--' }, { label: 'Average processing time', value: data ? duration(data.stats.averageDurationMs) : '--', note: data ? data.stats.timedConversions + ' measured jobs' : undefined }]} />
+    <Tabs.Root className="workspace-tabs admin-tabs" defaultValue="accounts">
+    <Tabs.List className="workspace-tab-list" aria-label="Administration views"><Tabs.Trigger value="accounts">Accounts</Tabs.Trigger><Tabs.Trigger value="conversions">Conversions</Tabs.Trigger><Tabs.Trigger value="health">Health</Tabs.Trigger></Tabs.List>
+    <Tabs.Content value="accounts" className="workspace-tab-panel">
+    <div className="section-bar"><h2>Recent accounts</h2><span className="muted">{data?.stats.users ?? '--'} total</span></div>
+      <div className="data-scroll" tabIndex={0} role="region" aria-label="Recent accounts"><table className="data-table"><thead><tr><th>Account</th><th>Plan / role</th><th>Status</th></tr></thead><tbody>{data?.recentUsers.map(user => <tr key={user.id}><td><strong>{user.name}</strong><small>{user.email}</small></td><td>{user.role === 'ADMIN' ? 'Admin' : user.plan.toLowerCase()}</td><td><Status value={user.status} /></td></tr>)}</tbody></table></div>
+      {data && !data.recentUsers.length && <p className="empty-view">No accounts recorded.</p>}
+    </Tabs.Content><Tabs.Content value="health" className="workspace-tab-panel">
+      <div className="section-bar"><h2>Workspace health</h2><ShieldCheck size={17} strokeWidth={1.4} /></div>
+      <div className="health-strip"><div><FolderOpen size={21} strokeWidth={1.3} /><span><strong>{data?.stats.sites ?? '--'}</strong><small>Projects</small></span></div><div><CircleAlert size={21} strokeWidth={1.3} /><span><strong>{data?.stats.failedJobs ?? '--'}</strong><small>Failed jobs</small></span></div></div>
+      <div className="section-bar"><h2>Membership mix</h2><span className="muted">{data ? accountCount : '--'} accounts</span></div><div className="plan-mix">{data?.plans.map(plan => <div key={plan.plan}><div className="plan-mix-label"><span>{plan.plan.charAt(0) + plan.plan.slice(1).toLowerCase()}</span><span>{plan._count}</span></div><progress aria-label={plan.plan + ' account share'} value={plan._count} max={Math.max(accountCount, 1)} /></div>)}</div>
+    </Tabs.Content><Tabs.Content value="conversions" className="workspace-tab-panel">
+    <div className="data-scroll" tabIndex={0} role="region" aria-label="Recent conversions"><table className="data-table"><thead><tr><th>Project</th><th>Status</th><th className="secondary-column">Processing time</th><th className="secondary-column">Created</th><th><span className="sr-only">Open</span></th></tr></thead><tbody>{data?.recentJobs.map(job => <tr key={job.id}><td><strong>{job.site.name}</strong><small>{job.site.owner.email}</small></td><td><Status value={job.status} /></td><td className="secondary-column">{duration(job.durationMs)}</td><td className="secondary-column">{new Date(job.createdAt).toLocaleDateString()}</td><td><Link className="icon-control" aria-label={'Open ' + job.site.name} to={'/sites/' + job.site.id}><ArrowUpRight size={15} /></Link></td></tr>)}</tbody></table></div>
+    {data && !data.recentJobs.length && <p className="empty-view">No conversion jobs recorded.</p>}
+    </Tabs.Content></Tabs.Root>
+  </Workspace>;
 }

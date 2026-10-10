@@ -1,0 +1,7 @@
+.session-loading { min-height: 100svh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: #f7f8f7; color: #496347; padding: 24px; }
+.session-loading > span { font-family: var(--font-display); font-size: 18px; }
+.session-loading p { color: #6d7e68; font-size: 11px; margin: 0; }
+.session-loading-line { width: 120px; height: 2px; background: #dae4d4; position: relative; overflow: hidden; margin: 6px 0; }
+.session-loading-line::after { content: ''; position: absolute; inset: 0; background: #6f8b5d; transform: scaleX(.3); animation: session-progress 1.5s ease-in-out infinite; }
+@keyframes session-progress { 0%,100% { transform: translateX(-65%) scaleX(.3); } 50% { transform: translateX(65%) scaleX(.3); } }
+@media(prefers-reduced-motion:reduce) { .session-loading-line::after { animation: none; transform: scaleX(.4); } }

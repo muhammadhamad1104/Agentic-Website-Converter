@@ -1,0 +1,4 @@
+.brand-mark { display: inline-block; flex-shrink: 0; background: currentColor; mask: url('/brand/mark.svg') center / contain no-repeat; -webkit-mask: url('/brand/mark.svg') center / contain no-repeat; }
+.product-brand .brand-mark,.workspace-brand .brand-mark,.account-brand .brand-mark { color: #839b76; }
+.product-nav.on-dark .brand-mark,.workspace-brand .brand-mark,.account-art .brand-mark { color: #b5c7a5; }
+.workspace-footer > a { display: inline-flex; align-items: center; gap: 9px; }

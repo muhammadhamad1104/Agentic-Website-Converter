@@ -16,7 +16,8 @@ interface AuthState {
   logout: () => void;
   fetchMe: () => Promise<void>;
   updateUser: (user: Partial<User>) => void;
-  updateProfileAsync: (payload: { name?: string; password?: string }) => Promise<void>;
+  updatePhotoAsync: (file: File | null) => Promise<void>;
+  updateProfileAsync: (payload: { name?: string; password?: string; currentPassword?: string; confirmPassword?: string }) => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -77,8 +78,10 @@ export const useAuthStore = create<AuthState>()(
           set({ isLoading: true, token: storedToken });
           try {
             const { data } = await api.get('/auth/me');
+            if (localStorage.getItem('token') !== storedToken) return;
             set({ user: data.user, isAuthenticated: true, token: storedToken, isLoading: false });
           } catch {
+            if (localStorage.getItem('token') !== storedToken) return;
             localStorage.removeItem('token');
             set({ user: null, isAuthenticated: false, token: null, isLoading: false });
           }
@@ -93,6 +96,7 @@ export const useAuthStore = create<AuthState>()(
           set({ isLoading: true });
           try {
             const { data } = await api.put('/auth/profile', payload);
+            if (data.token) { localStorage.setItem('token', data.token); set({ token: data.token }); }
             get().updateUser(data.user);
             set({ isLoading: false });
             toast.success('Profile updated successfully!');
@@ -100,6 +104,16 @@ export const useAuthStore = create<AuthState>()(
             set({ isLoading: false });
             throw err;
           }
+        },
+
+        updatePhotoAsync: async (file) => {
+          const accountId = get().user?.id;
+          const body = new FormData();
+          if (file) body.append('photo', file);
+          const { data } = file ? await api.put('/auth/avatar', body, { headers: { 'Content-Type': undefined } }) : await api.delete('/auth/avatar');
+          if (get().user?.id !== accountId) throw new Error('Your account changed. Sign in again before retrying.');
+          get().updateUser({ avatarUrl: data.user.avatarUrl });
+          toast.success(file ? 'Profile photo updated.' : 'Profile photo removed.');
         },
       }),
       {

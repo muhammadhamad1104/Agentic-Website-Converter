@@ -1,0 +1,20 @@
+import { AxiosError } from 'axios';
+import { afterEach, expect, it, vi } from 'vitest';
+import api from './api';
+import { useAuthStore } from '../store/authStore';
+vi.mock('react-hot-toast', () => ({ default: { error: vi.fn(), success: vi.fn() } }));
+const adapter = api.defaults.adapter;
+afterEach(() => { api.defaults.adapter = adapter; localStorage.clear(); });
+it.each(['rotated', 'signed-out'])('ignores a late revoked-token response after the session is %s', async state => {
+  localStorage.setItem('token', 'old-session');
+  let reject!: (error: any) => void;
+  let config: any;
+  api.defaults.adapter = request => { config = request; return new Promise((_resolve, fail) => { reject = fail; }); };
+  const result = api.get('/account/summary').catch(error => error);
+  await vi.waitFor(() => expect(config).toBeDefined());
+  if (state === 'rotated') localStorage.setItem('token', 'new-session'); else localStorage.removeItem('token');
+  useAuthStore.setState({ token: state === 'rotated' ? 'new-session' : null, isAuthenticated: state === 'rotated' });
+  reject(new AxiosError('Session expired', undefined, config, undefined, { status: 401, data: { error: 'Session expired' }, headers: {}, statusText: 'Unauthorized', config }));
+  await result;
+  expect(localStorage.getItem('token')).toBe(state === 'rotated' ? 'new-session' : null); expect(useAuthStore.getState().isAuthenticated).toBe(state === 'rotated');
+});

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Zap } from 'lucide-react';
+import BrandMark from '../BrandMark/BrandMark';
 import './Footer.css';
 
 export default function Footer() {
@@ -9,7 +9,7 @@ export default function Footer() {
         <div className="footer__grid">
           <div className="footer__brand">
             <Link to="/" className="navbar__logo" style={{ marginBottom: '1rem' }}>
-              <div className="navbar__logo-icon"><Zap size={20} /></div>
+              <div className="navbar__logo-icon"><BrandMark size={24} /></div>
               <span className="navbar__logo-text">Agentic<span className="gradient-text">Converter</span></span>
             </Link>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', lineHeight: 1.7, maxWidth: 280 }}>

@@ -3,6 +3,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  avatarUrl?: string | null;
   role: 'ADMIN' | 'OWNER' | 'COLLABORATOR';
   plan?: string;
   status: 'ACTIVE' | 'SUSPENDED';

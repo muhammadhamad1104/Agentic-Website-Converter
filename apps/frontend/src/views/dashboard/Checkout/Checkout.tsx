@@ -1,159 +1,84 @@
-import { useState, useEffect } from 'react';
-import { loadStripe } from '@stripe/stripe-js';
+import { useEffect, useRef, useState } from 'react';
+import { loadStripe } from '@stripe/stripe-js/pure';
+import type { Appearance } from '@stripe/stripe-js';
 import { Elements } from '@stripe/react-stripe-js';
-import { Link, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { Zap, Loader2, ArrowLeft } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ArrowLeft, ArrowUpRight, CheckCircle2, CreditCard, Layers3, Loader2, LockKeyhole, Infinity as InfinityIcon, Code2 } from 'lucide-react';
 import api from '../../../services/api';
-import { useAuthStore } from '@store/authStore';
-import { fadeInUp, staggerContainer, fadeInRight } from '@design/animations';
-
-import Scene3D from '../../components/Scene3D/Scene3D';
+import { useAuthStore } from '../../../store/authStore';
+import { useResource, type AccountSummary } from '../../../hooks/useResource';
+import { Workspace, LoadError } from '../../components/Workspace/Workspace';
 import CheckoutForm from './CheckoutForm';
+import './Checkout.css';
 
-// Initialize Stripe outside component render
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_dummy');
+const appearance: Appearance = {
+  theme: 'flat', labels: 'above',
+  variables: {
+    colorPrimary: '#365749', colorBackground: '#ffffff', colorText: '#314139', colorTextSecondary: '#707c74',
+    colorTextPlaceholder: '#869188', colorDanger: '#9b493e', borderRadius: '4px', fontFamily: 'Arial, sans-serif',
+    fontSizeBase: '14px', spacingUnit: '5px', gridRowSpacing: '22px',
+  },
+  rules: {
+    '.Input': { border: '1px solid #d6ded8', boxShadow: 'none', padding: '13px 12px' },
+    '.Input:focus': { borderColor: '#678568', boxShadow: '0 0 0 1px #678568' },
+    '.Label': { fontSize: '12px', fontWeight: '400', marginBottom: '8px', color: '#697c6b' },
+    '.Tab': { border: '1px solid #d6ded8', boxShadow: 'none', padding: '14px' },
+    '.Tab--selected': { borderColor: '#678568', backgroundColor: '#edf2ee', boxShadow: 'none' },
+    '.Block': { border: '1px solid #d6ded8', boxShadow: 'none' },
+  },
+};
+type Payment = { clientSecret: string; amount: number; currency: string };
 
 export default function Checkout() {
-  const [clientSecret, setClientSecret] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const { user } = useAuthStore();
-  const navigate = useNavigate();
-
-  // Price of Pro Plan in cents
-  const amountInCents = 19900; 
-
-  useEffect(() => {
-    // If not logged in, redirect to login
-    if (!user) {
-      navigate('/login', { state: { from: '/checkout' } });
-      return;
-    }
-
-    const fetchPaymentIntent = async () => {
-      try {
-        const { data } = await api.post('/payments/create-payment-intent', { amount: amountInCents });
-        if (data.clientSecret) {
-          setClientSecret(data.clientSecret);
-        } else {
-          setError('Failed to initialize payment.');
-        }
-      } catch (err: any) {
-        setError(err.response?.data?.error || 'Network error initializing checkout.');
-      }
-    };
-
-    fetchPaymentIntent();
-  }, [user, navigate, amountInCents]);
-
-  const appearance = {
-    theme: 'night' as const,
-    variables: {
-      colorPrimary: '#6366f1', // indigo-500
-      colorBackground: 'rgba(30, 41, 59, 0.5)',
-      colorText: '#f8fafc',
-      colorDanger: '#ef4444',
-      fontFamily: 'Inter, system-ui, sans-serif',
-      spacingUnit: '4px',
-      borderRadius: '12px',
-    },
-    rules: {
-      '.Input': {
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        boxShadow: 'none',
-      },
-      '.Input:focus': {
-        border: '1px solid #6366f1',
-      }
-    }
+  useEffect(() => { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }, []);
+  const key = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
+  const [stripe, setStripe] = useState<ReturnType<typeof loadStripe> | null>(null);
+  const user = useAuthStore(state => state.user);
+  const account = useResource<AccountSummary>('/account/summary');
+  const catalog = useResource<{ plans: Record<string, { priceCents: number; currency: string; name: string }> }>('/plans');
+  const [payment, setPayment] = useState<Payment | null>(null);
+  const [loading, setLoading] = useState(false);
+  const initializing = useRef(false);
+  const [error, setError] = useState('');
+  const entitled = account.data?.plan.conversionLimit === null;
+  const pro = catalog.data?.plans.PRO;
+  const offer = payment || (pro ? { amount: pro.priceCents, currency: pro.currency } : null);
+  const price = offer ? new Intl.NumberFormat('en-US', { style: 'currency', currency: offer.currency.toUpperCase(), maximumFractionDigits: offer.amount % 100 ? 2 : 0 }).format(offer.amount / 100) : null;
+  const available = Boolean(account.data && pro && !account.error && !catalog.error);
+  const initialize = async () => {
+    if (initializing.current || entitled || !key || !available) return;
+    initializing.current = true; setLoading(true); setError('');
+    try {
+      const details: Payment = payment || (await api.post('/payments/create-payment-intent')).data;
+      setPayment(details);
+      const instance = loadStripe(key);
+      if (!await instance) throw new Error('The payment form could not load. Please try again.');
+      setStripe(instance);
+    } catch (problem: any) {
+      setError(problem.response?.data?.error || problem.message || 'Checkout is unavailable.');
+    } finally { initializing.current = false; setLoading(false); }
   };
-
-  const options = {
-    clientSecret,
-    appearance,
-  };
-
-  return (
-    <div className="auth-page" style={{ position: 'relative' }}>
-      <Scene3D />
-
-      <div className="auth-layout" style={{ position: 'relative', zIndex: 1, maxWidth: '1200px', margin: '0 auto', display: 'flex', alignItems: 'center', minHeight: '100vh', padding: '0 2rem' }}>
-        
-        {/* Left Side: Info */}
-        <motion.div
-          className="auth-panel auth-panel--left"
-          variants={staggerContainer}
-          initial="hidden"
-          animate="visible"
-          style={{ paddingRight: '4rem' }}
-        >
-          <Link to="/" className="auth-logo">
-            <div className="navbar__logo-icon"><Zap size={22} /></div>
-            <span className="navbar__logo-text">
-              Agentic<span className="gradient-text">Converter</span>
-            </span>
-          </Link>
-
-          <motion.div className="auth-hero" variants={fadeInUp}>
-            <h2 className="auth-hero__title">
-              Upgrade to<br />
-              <span className="gradient-text-animated">Pro Researcher</span>
-            </h2>
-            <p className="auth-hero__subtitle" style={{ marginTop: '1rem' }}>
-              Lifetime access to unlimited conversions, Claude 3.5 Sonnet, and full source code ZIP exports.
-            </p>
-          </motion.div>
-
-          <motion.div variants={fadeInUp} style={{ marginTop: '2rem' }}>
-            <div className="glass-intense" style={{ padding: '1.5rem', borderRadius: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-primary)' }}>Lifetime License</h3>
-                <p style={{ margin: '0.25rem 0 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>One-time payment</p>
-              </div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                $199.00
-              </div>
-            </div>
-          </motion.div>
-        </motion.div>
-
-        {/* Right Side: Payment Form */}
-        <motion.div
-          className="auth-panel auth-panel--right"
-          variants={fadeInRight}
-          initial="hidden"
-          animate="visible"
-          style={{ width: '100%', maxWidth: '500px' }}
-        >
-          <div className="auth-form-card glass-intense">
-            <div className="auth-form-header">
-              <h1 className="auth-form-title">Secure Checkout</h1>
-              <p className="auth-form-subtitle">Complete your payment below</p>
-            </div>
-
-            {error ? (
-              <div style={{ padding: '1rem', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: '8px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
-                {error}
-              </div>
-            ) : !clientSecret ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '3rem 0', color: 'var(--text-secondary)' }}>
-                <Loader2 className="animate-spin" size={32} style={{ marginBottom: '1rem', color: 'var(--indigo-400)' }} />
-                Initializing secure connection...
-              </div>
-            ) : (
-              <Elements options={options} stripe={stripePromise}>
-                <CheckoutForm amount={amountInCents / 100} />
-              </Elements>
-            )}
-
-            <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
-              <button onClick={() => navigate(-1)} className="btn btn-ghost btn-sm" style={{ color: 'var(--text-secondary)' }}>
-                <ArrowLeft size={16} /> Cancel and go back
-              </button>
-            </div>
-          </div>
-        </motion.div>
-      </div>
+  return <div className="checkout-page"><Workspace>
+    <Link to="/profile" className="checkout-back"><ArrowLeft size={15} />Your account</Link>
+    <header className="checkout-intro"><div><h1>{entitled ? <>Already <em>yours.</em></> : <>Your <em>Pro</em> upgrade.</>}</h1></div><span className="checkout-secure"><LockKeyhole size={14} />{entitled ? 'UNLIMITED ACCESS' : 'SECURE CHECKOUT'}</span></header>
+    {account.error && <LoadError error={account.error} retry={account.refresh} />}
+    {catalog.error && <LoadError error={catalog.error} retry={catalog.refresh} />}
+    <div className="checkout-layout">
+      <section className="checkout-summary" aria-label="Membership summary">
+        <div className="checkout-plan"><span>{entitled ? account.data?.plan.name : pro?.name || 'Pro'} membership</span></div>
+        <div className="checkout-amount">{entitled ? <h2>Unlimited.</h2> : price ? <h2>{price}</h2> : <span className="checkout-price-loading" role="status">Loading your offer...</span>}<p>{entitled ? 'Your access is already included.' : <>One-time payment{offer && <span> / {offer.currency.toUpperCase()}</span>}</>}</p></div>
+        <ul className="checkout-inclusions"><li><InfinityIcon size={18} strokeWidth={1.4} />Unlimited conversions</li><li><Code2 size={18} strokeWidth={1.4} />Preview & source export</li><li><Layers3 size={18} strokeWidth={1.4} />Generated admin workspace</li></ul>
+        <div className="checkout-account"><span>YOUR ACCOUNT</span><p>{user?.email || 'Loading account...'}</p></div>
+      </section>
+      <section className="checkout-payment" aria-label="Payment">
+        {entitled ? <div className="checkout-state"><CheckCircle2 size={38} strokeWidth={1.2} /><h2>You're all set.</h2><p>No payment needed.</p><Link to="/dashboard" className="checkout-command">Open workspace <ArrowUpRight size={18} /></Link></div> : <>
+          <h2>Payment</h2>
+          {error && <div className="notice-box error" role="alert">{error}</div>}
+          {!key ? <div className="checkout-unavailable" role="status"><CreditCard size={24} strokeWidth={1.3} /><h3>Payments are unavailable.</h3><p>Please try again later.</p><Link to="/profile" className="checkout-text-link">Back to your account <ArrowUpRight size={16} /></Link></div> :
+            payment && stripe ? <Elements stripe={stripe} options={{ clientSecret: payment.clientSecret, appearance }}><CheckoutForm amountCents={payment.amount} currency={payment.currency} clientSecret={payment.clientSecret} email={user?.email} /></Elements> :
+              <div className="checkout-start"><dl className="checkout-order"><div className="checkout-total"><dt>Due today</dt><dd>{price || 'Loading...'}</dd></div></dl><button className="checkout-command" disabled={loading || !available} onClick={initialize}>{loading ? <><Loader2 className="animate-spin" size={17} />Opening payment...</> : <>{error ? 'Retry checkout' : 'Continue to payment'}<ArrowUpRight size={18} /></>}</button><p className="checkout-stripe"><LockKeyhole size={12} />Payment details are handled by Stripe.</p></div>}
+        </>}
+      </section>
     </div>
-  );
+  </Workspace></div>;
 }

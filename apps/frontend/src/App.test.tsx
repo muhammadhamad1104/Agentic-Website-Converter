@@ -52,10 +52,10 @@ describe('App Routing', () => {
     expect(screen.getByTestId('login-page')).toBeInTheDocument();
   });
 
-  it('renders Wizard page on /wizard route', () => {
+  it('redirects unauthenticated wizard requests to login', () => {
     window.history.pushState({}, 'Test', '/wizard');
     render(<App />);
-    expect(screen.getByTestId('wizard-page')).toBeInTheDocument();
+    expect(screen.getByTestId('login-page')).toBeInTheDocument();
   });
 
   it('renders NotFound page on unknown route', () => {
