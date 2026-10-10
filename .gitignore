@@ -26,14 +26,22 @@ build/
 .DS_Store
 Thumbs.db
 
+# Generated conversion exports
+/converted-site-*/
+
 # Database
 *.db
 *.sqlite
 *.sqlite3
+/apps/worker/data/crawl-cache/
 
 # Prisma
 apps/backend/prisma/migrations/*
 !apps/backend/prisma/migrations/.gitkeep
+!apps/backend/prisma/migrations/20261004_password_recovery/
+!apps/backend/prisma/migrations/20261004_password_recovery/migration.sql
+!apps/backend/prisma/migrations/20261005_profile_photo/
+!apps/backend/prisma/migrations/20261005_profile_photo/migration.sql
 
 # Testing
 coverage/
