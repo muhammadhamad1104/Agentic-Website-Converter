@@ -40,7 +40,7 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/dist ./dist
 
 # Expose port and run
-EXPOSE 5000
+EXPOSE 5000 5001
 
 # Start command
 CMD ["node", "dist/server.js"]

@@ -42,11 +42,13 @@ app.use(cors({
 app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) } }));
 
 // Body parsing
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '10mb', verify: (req, _res, buffer) => {
+  if (req.url === '/api/payments/webhook') (req as any).rawBody = buffer;
+} }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Trust proxy (for accurate IP addresses behind reverse proxy)
-app.set('trust proxy', 1);
+app.set('trust proxy', process.env.TRUST_PROXY || false);
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -56,6 +58,11 @@ import paymentRoutes from './routes/payment.route';
 app.use('/api/payments', paymentRoutes);
 import sitesRoutes from './routes/sites';
 app.use('/api/sites', sitesRoutes);
+import { requireAuth } from './middleware/auth';
+import { catalog, summary, adminSummary } from './controllers/insightController';
+app.get('/api/plans', catalog);
+app.get('/api/account/summary', requireAuth, summary);
+app.get('/api/admin/summary', requireAuth, adminSummary);
 
 // Health check endpoint (includes database and redis status)
 app.get('/api/health', async (req: Request, res: Response) => {

@@ -10,3 +10,9 @@ export const rateLimiter = rateLimit({
     message: 'Please try again later'
   }
 });
+
+export const recoveryRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, limit: 5,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many recovery attempts. Please try again in 15 minutes.' },
+});

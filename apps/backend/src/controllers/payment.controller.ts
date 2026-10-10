@@ -1,74 +1,44 @@
 import { Request, Response, NextFunction } from 'express';
 import Stripe from 'stripe';
 import { PrismaClient } from '@prisma/client';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy', {
-  apiVersion: '2023-10-16' as any,
-});
+import { PLAN_CATALOG, planFor } from '../services/plans';
 
 const prisma = new PrismaClient();
+const stripeClient = () => new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 export const createPaymentIntent = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { amount } = req.body;
-    
-    if (!amount) {
-      return res.status(400).json({ error: 'Amount is required' });
-    }
-
-    const userId = (req as any).user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    // Optional: We can automatically upgrade user after the intent succeeds if we hook it up via Webhook.
-    // For now, returning the intent client secret to the frontend.
-    
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(amount), // must be an integer in cents
-      currency: 'usd',
-      automatic_payment_methods: {
-        enabled: true,
-      },
-      metadata: {
-        userId: userId
-      }
+    if (!process.env.STRIPE_SECRET_KEY) return res.status(503).json({ error: 'Payments are not configured' });
+    const user = (req as any).account;
+    if (planFor(user).key !== 'STARTER') return res.status(409).json({ error: 'Your account already has unlimited access' });
+    const plan = PLAN_CATALOG.PRO;
+    const intent = await stripeClient().paymentIntents.create({
+      amount: plan.priceCents, currency: plan.currency, automatic_payment_methods: { enabled: true },
+      metadata: { userId: user.id, product: 'converter-pro-lifetime', plan: 'PRO' },
     });
-
-    res.json({ clientSecret: paymentIntent.client_secret });
-  } catch (error) {
-    console.error('Stripe Payment Intent Error:', error);
-    next(error);
-  }
+    res.json({ clientSecret: intent.client_secret, amount: plan.priceCents, currency: plan.currency });
+  } catch (error) { next(error); }
 };
 
 export const handleWebhook = async (req: Request, res: Response, next: NextFunction) => {
-  const sig = req.headers['stripe-signature'];
-
-  let event;
+  if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET)
+    return res.status(503).json({ error: 'Payments are not configured' });
+  let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(
-      (req as any).rawBody,
-      sig as string,
-      process.env.STRIPE_WEBHOOK_SECRET || ''
-    );
-  } catch (err: any) {
-    console.error('Webhook signature verification failed.', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
+    event = stripeClient().webhooks.constructEvent((req as any).rawBody || req.body,
+      String(req.headers['stripe-signature'] || ''), process.env.STRIPE_WEBHOOK_SECRET);
+  } catch {
+    return res.status(400).json({ error: 'Invalid webhook signature' });
   }
-
-  // Handle the event
-  if (event.type === 'payment_intent.succeeded') {
-    const paymentIntent = event.data.object as any;
-    const userId = paymentIntent.metadata?.userId;
-    if (userId) {
-      await prisma.user.update({
-        where: { id: userId },
-        data: { plan: 'PRO' }
-      });
-      console.log(`[Webhook] User ${userId} upgraded to PRO via Stripe PaymentIntent`);
+  try {
+    if (event.type === 'payment_intent.succeeded') {
+      const intent = event.data.object as Stripe.PaymentIntent;
+      if (intent.metadata.product === 'converter-pro-lifetime' && intent.metadata.plan === 'PRO'
+        && intent.metadata.userId && intent.amount_received === PLAN_CATALOG.PRO.priceCents
+        && intent.currency === PLAN_CATALOG.PRO.currency) {
+        await prisma.user.update({ where: { id: intent.metadata.userId }, data: { plan: 'PRO' } });
+      }
     }
-  }
-
-  res.json({ received: true });
+    res.json({ received: true });
+  } catch (error) { next(error); }
 };

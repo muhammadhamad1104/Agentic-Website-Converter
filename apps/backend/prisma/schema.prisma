@@ -13,6 +13,11 @@ model User {
   name          String
   email         String   @unique
   passwordHash  String   @map("password_hash")
+  avatarUrl     String?  @db.Text @map("avatar_url")
+  authVersion   Int      @default(0) @map("auth_version")
+  resetTokenHash String? @unique @map("reset_token_hash")
+  resetExpiresAt DateTime? @map("reset_expires_at")
+  resetRequestedAt DateTime? @map("reset_requested_at")
   role          Role     @default(OWNER)
   plan          String   @default("STARTER")
   status        Status   @default(ACTIVE)

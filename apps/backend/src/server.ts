@@ -3,6 +3,8 @@ import app from './app';
 import { logger } from './utils/logger';
 import { prisma, closeDatabase } from './config/database';
 import { closeRedis } from './config/redis';
+import { createPreviewGateway } from './services/previewGateway';
+import { startPasswordRecoveryWorker, closePasswordRecoveryQueue } from './queue/passwordRecoveryQueue';
 
 const PORT = process.env.PORT || 5000;
 
@@ -11,6 +13,7 @@ async function startServer() {
   try {
     // Test database connection
     await prisma.$connect();
+    startPasswordRecoveryWorker();
     logger.info('✅ Database connected successfully');
     
     // Start HTTP server
@@ -20,17 +23,21 @@ async function startServer() {
       logger.info(`🔗 API URL: http://localhost:${PORT}/api`);
       logger.info(`💚 Health check: http://localhost:${PORT}/api/health`);
     });
+    const previewServer = createPreviewGateway().listen(Number(process.env.PREVIEW_PORT || 5001));
+    previewServer.on('error', error => logger.error('Preview gateway failed to start:', error));
 
     // Graceful shutdown handler
     const gracefulShutdown = async (signal) => {
       logger.info(`\n🛑 ${signal} received. Starting graceful shutdown...`);
       
       // Stop accepting new connections
+      previewServer.close();
       server.close(async () => {
         logger.info('✅ HTTP server closed');
         
         try {
           // Close database connections
+          await closePasswordRecoveryQueue();
           await closeDatabase();
           logger.info('✅ Database connections closed');
           

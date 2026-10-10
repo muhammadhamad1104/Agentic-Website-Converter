@@ -6,7 +6,7 @@ import argon2 from 'argon2';
 
 process.env.JWT_SECRET = 'test-secret';
 
-process.env.JWT_SECRET = 'test-secret';
+jest.mock('../queue/passwordRecoveryQueue', () => ({ enqueueRecovery: jest.fn(), enqueuePasswordChanged: jest.fn().mockResolvedValue(undefined) }));
 
 jest.mock('@prisma/client', () => {
   const mPrisma = {
@@ -29,7 +29,7 @@ describe('Auth API', () => {
   let testHash: string;
 
   beforeAll(async () => {
-    testHash = await argon2.hash('password123');
+    testHash = await argon2.hash('password123456');
   });
 
   beforeEach(() => {
@@ -51,7 +51,7 @@ describe('Auth API', () => {
       .send({
         name: 'Test User',
         email: 'test@example.com',
-        password: 'password123'
+        password: 'password123456'
       });
     
     expect(res.status).toBe(201);
@@ -65,6 +65,7 @@ describe('Auth API', () => {
       id: 'uuid-1',
       email: 'test@example.com',
       passwordHash: testHash,
+      status: 'ACTIVE',
       role: 'OWNER',
     } as never);
     mockPrisma.user.update.mockResolvedValue({} as never);
@@ -73,7 +74,7 @@ describe('Auth API', () => {
       .post('/api/auth/login')
       .send({
         email: 'test@example.com',
-        password: 'password123'
+        password: 'password123456'
       });
     
     expect(res.status).toBe(200);
@@ -86,6 +87,7 @@ describe('Auth API', () => {
       id: 'uuid-1',
       email: 'test@example.com',
       passwordHash: testHash,
+      status: 'ACTIVE',
       role: 'OWNER',
     } as never);
 

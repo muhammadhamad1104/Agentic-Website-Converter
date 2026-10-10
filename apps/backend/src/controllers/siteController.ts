@@ -1,276 +1,69 @@
 import { Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import axios from 'axios';
+import { workerMetrics, processingDuration } from '../services/conversionMetrics';
 
 const prisma = new PrismaClient();
 const WORKER_URL = process.env.WORKER_URL || process.env.WORKER_API_URL || 'http://localhost:8000';
 
+async function loadWorker(crawl: any) {
+  if (!crawl?.logRef) return null;
+  try { return (await axios.get(WORKER_URL + '/api/jobs/' + crawl.logRef, { timeout: 4000 })).data.job; }
+  catch { return null; }
+}
+
+async function synchronize(crawl: any, worker: any) {
+  if (!crawl || !worker) return;
+  const measured = processingDuration(worker);
+  const metrics = workerMetrics(worker, crawl);
+  const status = String(worker.status).toLowerCase();
+  const terminal = ['validated', 'completed', 'ready'].includes(status) ? 'COMPLETED' : status === 'failed' ? 'FAILED' : null;
+  await prisma.crawl.update({ where: { id: crawl.id }, data: {
+    pagesCrawled: metrics.pages, assetsDiscovered: metrics.assets,
+    ...(measured === null ? {} : { durationMs: measured }), ...(terminal ? { status: terminal } : {}),
+  } });
+}
+
 export const getSites = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const userId = (req as any).user?.userId;
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const skip = (page - 1) * limit;
-
+    const userId = (req as any).account.id;
+    const page = Math.max(1, Number.parseInt(String(req.query.page)) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(String(req.query.limit)) || 20));
     const [sites, total] = await Promise.all([
-      prisma.site.findMany({
-        where: { ownerId: userId },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-        include: {
-          crawls: {
-            orderBy: { createdAt: 'desc' },
-            take: 1
-          },
-          entities: true
-        }
-      }),
-      prisma.site.count({ where: { ownerId: userId } })
+      prisma.site.findMany({ where: { ownerId: userId }, orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit, take: limit,
+        include: { crawls: { orderBy: { createdAt: 'desc' }, take: 1 }, entities: true } }),
+      prisma.site.count({ where: { ownerId: userId } }),
     ]);
-
-    // Fetch live stats from python worker for each site concurrently
-    const formattedSites = await Promise.all(sites.map(async (site) => {
-      const latestCrawl = site.crawls[0];
-      let pages = latestCrawl?.pagesCrawled || 0;
-      let models = site.entities.length;
-      let assets = latestCrawl?.assetsDiscovered || 0;
-      let durationMs = 0;
-      let status = site.status;
-      
-      if (latestCrawl?.logRef) {
-        try {
-          const workerRes = await axios.get(`${WORKER_URL}/api/jobs/${latestCrawl.logRef}`, { timeout: 2000 });
-          const workerJob = workerRes.data.job;
-          
-            if (workerJob) {
-              const crawlConfig = workerJob.crawl_config || {};
-              const crawlArtifacts = workerJob.crawl_artifacts || {};
-              const totals = crawlArtifacts.totals || {};
-
-              const workerPages = totals.pages_crawled || 
-                (workerJob.html_pages || []).length || 
-                (workerJob.crawled_pages || []).length || 
-                (crawlConfig.html_pages ? crawlConfig.html_pages.length : 0);
-              pages = Math.max(pages, workerPages);
-              
-              const getLength = (obj: any) => Array.isArray(obj) ? obj.length : (obj && typeof obj === 'object' ? Object.keys(obj).length : 0);
-              
-              const workerAssets = totals.assets_downloaded || 
-                workerJob.counts_by_kind?.assets ||
-                crawlArtifacts.asset_count ||
-                getLength(crawlArtifacts.assets) || 
-                getLength(workerJob.extraction_report?.assets) || 0;
-              assets = Math.max(assets || 0, workerAssets);
-
-              if (latestCrawl && (assets > (latestCrawl.assetsDiscovered || 0) || pages > (latestCrawl.pagesCrawled || 0))) {
-                prisma.crawl.update({
-                  where: { id: latestCrawl.id },
-                  data: {
-                    assetsDiscovered: Math.max(latestCrawl.assetsDiscovered || 0, assets),
-                    pagesCrawled: Math.max(latestCrawl.pagesCrawled || 0, pages)
-                  }
-                }).catch(() => {});
-              }
-
-              const schema = workerJob.schema_proposal || {};
-              const entities = schema.entities || schema.models || [];
-              models = entities.length;
-              
-              const realArtifacts = workerJob.generated_artifacts || {};
-              if (realArtifacts.prisma_schema && models === 0) {
-                 const matches = realArtifacts.prisma_schema.match(/model\s+\w+/g);
-                 if (matches) models = matches.length;
-              }
-              
-              // Map worker status if it exists and is more advanced
-            const workerStatus = (workerJob.status || '').toUpperCase();
-            if (['INFERRING_SCHEMA', 'AWAITING_APPROVAL', 'GENERATING', 'GENERATED', 'VALIDATED', 'COMPLETED', 'FAILED', 'READY'].includes(workerStatus)) {
-              status = workerStatus;
-            }
-
-            if (workerJob.duration_ms && workerJob.duration_ms > 0) {
-              durationMs = Math.round(workerJob.duration_ms);
-            } else if (workerJob.created_at_ms && workerJob.updated_at_ms) {
-              durationMs = Math.round(Math.max(0, workerJob.updated_at_ms - workerJob.created_at_ms));
-            } else if (Array.isArray(workerJob.trace_events) && workerJob.trace_events.length > 1) {
-              const first = workerJob.trace_events[0];
-              const last = workerJob.trace_events[workerJob.trace_events.length - 1];
-              const t0 = first?.timestamp_ms || (first?.timestamp ? new Date(first.timestamp).getTime() : 0);
-              const tN = last?.timestamp_ms || (last?.timestamp ? new Date(last.timestamp).getTime() : 0);
-              if (t0 && tN && tN > t0) {
-                durationMs = tN - t0;
-              }
-            }
-
-            if (durationMs === 0 && latestCrawl) {
-              const created = new Date(latestCrawl.createdAt).getTime();
-              const updated = new Date(latestCrawl.updatedAt).getTime();
-              if (updated > created) {
-                durationMs = updated - created;
-              }
-            }
-          }
-        } catch (err) {
-          // Ignore network errors to worker
-        }
-      }
-
-      if (durationMs === 0 && latestCrawl) {
-        const created = new Date(latestCrawl.createdAt).getTime();
-        const updated = new Date(latestCrawl.updatedAt).getTime();
-        if (updated > created) {
-          durationMs = updated - created;
-        }
-      }
-
-      return {
-        id: site.id,
-        name: site.name,
-        slug: site.slug,
-        status,
-        pages,
-        models,
-        assets,
-        durationMs,
-        lastRun: latestCrawl ? latestCrawl.createdAt : site.createdAt,
-      };
+    const formatted = await Promise.all(sites.map(async site => {
+      const crawl = site.crawls[0];
+      const worker = await loadWorker(crawl);
+      await synchronize(crawl, worker);
+      const metrics = workerMetrics(worker || {}, crawl, site.entities);
+      return { ...site, ...metrics, status: worker?.status?.toUpperCase() || crawl?.status || site.status,
+        lastRun: crawl?.createdAt || site.createdAt, hasArtifacts: Boolean(worker?.generated_artifacts?.backend) };
     }));
-
-    res.json({ sites: formattedSites, total });
-  } catch (error) {
-    next(error);
-  }
+    res.json({ sites: formatted, total });
+  } catch (error) { next(error); }
 };
 
 export const getSiteById = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const userId = (req as any).user?.userId;
-    const id = req.params.id as string;
-
-    const site = await prisma.site.findUnique({
-      where: { id },
-      include: {
-        crawls: { orderBy: { createdAt: 'desc' } },
-        entities: true,
-      }
-    });
-
+    const user = (req as any).account;
+    const site = await prisma.site.findUnique({ where: { id: String(req.params.id) },
+      include: { crawls: { orderBy: { createdAt: 'desc' } }, entities: { include: { fields: true } } } });
     if (!site) return res.status(404).json({ error: 'Site not found' });
-    if (site.ownerId !== userId) return res.status(403).json({ error: 'Forbidden' });
-
-    const latestCrawl = site.crawls[0];
-    let stats = {
-      pages: latestCrawl?.pagesCrawled || 0,
-      models: site.entities.length,
-      assets: latestCrawl?.assetsDiscovered || 0,
-      apiRoutes: site.entities.length * 5,
-      components: (site.entities.length * 3) + (latestCrawl?.pagesCrawled || 0) + 5,
-      durationMs: 0
-    };
-
-    if (latestCrawl?.logRef) {
-      try {
-        const workerRes = await axios.get(`${WORKER_URL}/api/jobs/${latestCrawl.logRef}`, { timeout: 2000 });
-        const workerJob = workerRes.data.job;
-        
-        if (workerJob) {
-          const crawlConfig = workerJob.crawl_config || {};
-          const crawlArtifacts = workerJob.crawl_artifacts || {};
-          const totals = crawlArtifacts.totals || {};
-
-          const workerPages = totals.pages_crawled || 
-            (workerJob.html_pages || []).length || 
-            (workerJob.crawled_pages || []).length || 
-            (crawlConfig.html_pages ? crawlConfig.html_pages.length : 0);
-          stats.pages = Math.max(stats.pages, workerPages);
-          
-          const getLength = (obj: any) => Array.isArray(obj) ? obj.length : (obj && typeof obj === 'object' ? Object.keys(obj).length : 0);
-          
-          const workerAssets = totals.assets_downloaded || 
-            workerJob.counts_by_kind?.assets ||
-            crawlArtifacts.asset_count ||
-            getLength(crawlArtifacts.assets) || 
-            getLength(workerJob.extraction_report?.assets) || 0;
-          stats.assets = Math.max(stats.assets || 0, workerAssets);
-
-          if (latestCrawl && (stats.assets > (latestCrawl.assetsDiscovered || 0) || stats.pages > (latestCrawl.pagesCrawled || 0))) {
-            prisma.crawl.update({
-              where: { id: latestCrawl.id },
-              data: {
-                assetsDiscovered: Math.max(latestCrawl.assetsDiscovered || 0, stats.assets),
-                pagesCrawled: Math.max(latestCrawl.pagesCrawled || 0, stats.pages)
-              }
-            }).catch(() => {});
-          }
-
-          const schema = workerJob.schema_proposal || {};
-          let workerEntities = schema.entities || schema.models || [];
-          const realArtifacts = workerJob.generated_artifacts || {};
-
-          if (workerEntities.length === 0 && realArtifacts.prisma_schema) {
-            const modelBlocks = realArtifacts.prisma_schema.match(/model\s+(\w+)\s*\{([^}]+)\}/g) || [];
-            workerEntities = modelBlocks.map((block: string, i: number) => {
-              const nameMatch = block.match(/model\s+(\w+)/);
-              const modelName = nameMatch ? nameMatch[1] : `Model_${i + 1}`;
-              const fieldLines = block.split('\n').filter(line => line.trim() && !line.includes('model ') && !line.includes('}'));
-              const fields = fieldLines.map((line, j) => {
-                const parts = line.trim().split(/\s+/);
-                return {
-                  id: parts[0] || `field_${j}`,
-                  name: parts[0] || 'field',
-                  type: parts[1] || 'String'
-                };
-              }).filter(f => f.name && !f.name.startsWith('@') && f.name !== 'createdAt' && f.name !== 'updatedAt');
-
-              return {
-                id: modelName,
-                name: modelName,
-                fields
-              };
-            });
-          }
-
-          if (workerEntities.length > 0) {
-            stats.models = Math.max(stats.models, workerEntities.length);
-            if (site.entities.length === 0) {
-              (site as any).entities = workerEntities.map((e: any, i: number) => ({
-                id: e.id || e.name || `entity_${i}`,
-                name: e.name,
-                fields: (e.fields || []).map((f: any, j: number) => ({
-                  id: f.id || f.name || `field_${i}_${j}`,
-                  name: f.name,
-                  type: f.type || 'String'
-                }))
-              }));
-            }
-          } else if (site.entities.length > 0) {
-            stats.models = site.entities.length;
-          }
-
-          // Exact logic based on generator architecture
-          if (stats.models > 0) {
-            stats.apiRoutes = stats.models * 5;
-            stats.components = (stats.models * 3) + stats.pages + 5;
-          }
-          
-          if (workerJob.created_at && workerJob.updated_at && ['COMPLETED', 'VALIDATED', 'READY'].includes((workerJob.status || '').toUpperCase())) {
-            const created = new Date(workerJob.created_at).getTime();
-            const updated = new Date(workerJob.updated_at).getTime();
-            stats.durationMs = updated - created;
-          }
-        }
-      } catch (err) {
-        // Ignore network errors to worker
-      }
-    }
-
-    res.json({ site, stats });
-  } catch (error) {
-    next(error);
-  }
+    if (site.ownerId !== user.id && user.role !== 'ADMIN') return res.status(403).json({ error: 'Forbidden' });
+    const crawl = site.crawls[0];
+    const worker = await loadWorker(crawl);
+    await synchronize(crawl, worker);
+    const entities = worker?.schema_proposal?.entities || site.entities;
+    res.json({ site: { ...site, entities, status: worker?.status?.toUpperCase() || crawl?.status || site.status,
+      hasArtifacts: Boolean(worker?.generated_artifacts?.backend),
+      workerAvailable: Boolean(worker), traceEvents: worker?.trace_events || [],
+      validation: worker?.validation_report || null },
+      stats: workerMetrics(worker || {}, crawl, entities) });
+  } catch (error) { next(error); }
 };
 
 export const checkStaticWebsite = async (url: string): Promise<{ valid: boolean; error?: string; message?: string }> => {
@@ -370,17 +163,7 @@ export const createSite = async (req: Request, res: Response, next: NextFunction
       }
     }
 
-    // 3-Tier User Limit Check:
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user?.role !== 'ADMIN') {
-      const siteCount = await prisma.site.count({ where: { ownerId: userId } });
-      
-      if (user?.plan === 'PRO' && siteCount >= 10) {
-        return res.status(403).json({ error: 'PRO plan limit reached (10 sites max)' });
-      } else if (user?.plan !== 'PRO' && siteCount >= 2) {
-        return res.status(403).json({ error: 'Starter plan limit reached (2 sites max). Upgrade to PRO for more.' });
-      }
-    }
+    // Conversion allowances are reserved atomically when a job starts.
 
     let parsedHost = 'site';
     try {
@@ -414,9 +197,20 @@ export const deleteSite = async (req: Request, res: Response, next: NextFunction
 
     const site = await prisma.site.findUnique({ where: { id } });
     if (!site) return res.status(404).json({ error: 'Site not found' });
-    if (site.ownerId !== userId) return res.status(403).json({ error: 'Forbidden' });
+    if (site.ownerId !== userId && (req as any).account.role !== 'ADMIN') return res.status(403).json({ error: 'Forbidden' });
 
-    await prisma.site.delete({ where: { id } });
+    await prisma.$transaction(async tx => {
+      await tx.user.update({ where: { id: site.ownerId }, data: { updatedAt: new Date() } });
+      const crawls = await tx.crawl.findMany({ where: { siteId: id }, select: { id: true } });
+      const recorded = await tx.auditLog.findMany({ where: { action: 'conversion.started',
+        targetId: { in: crawls.map(crawl => crawl.id) } }, select: { targetId: true } });
+      const known = new Set(recorded.map(row => row.targetId));
+      for (const crawl of crawls.filter(row => !known.has(row.id))) {
+        await tx.auditLog.create({ data: { actorUserId: site.ownerId, action: 'conversion.started',
+          targetType: 'crawl', targetId: crawl.id, ipHash: 'not-recorded' } });
+      }
+      await tx.site.delete({ where: { id } });
+    });
     res.json({ message: 'Site deleted' });
   } catch (error) {
     next(error);
@@ -435,4 +229,3 @@ export const validateSiteUrl = async (req: Request, res: Response, next: NextFun
     next(error);
   }
 };
-

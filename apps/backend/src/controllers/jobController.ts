@@ -1,104 +1,57 @@
 import { Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, SiteStatus } from '@prisma/client';
 import axios from 'axios';
 import { conversionQueue } from '../queue/jobQueue';
+import { randomUUID } from 'node:crypto';
+import { entitlement } from '../services/plans';
+import { processingDuration } from '../services/conversionMetrics';
 
 const prisma = new PrismaClient();
-const WORKER_URL = process.env.WORKER_API_URL || 'http://localhost:8000';
+const WORKER_URL = process.env.WORKER_URL || process.env.WORKER_API_URL || 'http://localhost:8000';
 
 export const createJob = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { siteId, url, extractImages, crawlDepth, inferRelations } = req.body;
-    
-    let actualUrl = (url || '').trim();
-    if (!actualUrl) {
-      return res.status(400).json({ error: 'URL is required' });
+    const { siteId, url, extractImages, crawlDepth, inferRelations, fullSite, maxPages, maxAssets } = req.body;
+    for (const value of [crawlDepth, maxPages, maxAssets]) {
+      if (value !== undefined && (!Number.isInteger(value) || value < 0))
+        return res.status(400).json({ error: 'Crawl limits must be non-negative integers' });
     }
-    if (!/^https?:\/\//i.test(actualUrl)) {
-      actualUrl = `https://${actualUrl}`;
-    }
-
-    // Check user plan/role
-    const userId = (req as any).user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    // 3-Tier Conversion Limit Check:
-    // ADMIN: Unlimited
-    // PRO: Max 50 conversions
-    // STARTER/Free: Max 5 conversions
-    if (user.role !== 'ADMIN') {
-      const userSites = await prisma.site.findMany({
-        where: { ownerId: user.id },
-        select: { id: true }
-      });
-      const siteIds = userSites.map(s => s.id);
-      
-      const totalConversions = await prisma.crawl.count({
-        where: { siteId: { in: siteIds } }
-      });
-
-      if (user.plan === 'PRO' && totalConversions >= 50) {
-        return res.status(403).json({ error: 'PRO plan limit reached (50 conversions max)' });
-      } else if (user.plan !== 'PRO' && totalConversions >= 5) {
-        return res.status(403).json({ error: 'Starter plan limit reached (5 conversions max). Upgrade to PRO for more.' });
+    let actualUrl = typeof url === 'string' ? url.trim() : '';
+    if (!actualUrl) return res.status(400).json({ error: 'URL is required' });
+    if (!/^https?:\/\//i.test(actualUrl)) actualUrl = 'https://' + actualUrl;
+    const user = (req as any).account;
+    const result = await prisma.$transaction(async tx => {
+      // Serialize quota reservation per account, including concurrent browser tabs.
+      await tx.user.update({ where: { id: user.id }, data: { updatedAt: new Date() } });
+      const access = await entitlement(tx, user);
+      if (!access.canConvert) throw Object.assign(new Error('Your 5 Starter conversions are used. Upgrade to Pro for unlimited conversions.'), { statusCode: 403 });
+      let site = siteId ? await tx.site.findUnique({ where: { id: siteId } }) : null;
+      if (siteId && !site) throw Object.assign(new Error('Site not found'), { statusCode: 404 });
+      if (site && site.ownerId !== user.id && user.role !== 'ADMIN')
+        throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+      if (!site) {
+        const host = new URL(actualUrl).hostname;
+        site = await tx.site.create({ data: { name: host, slug: host.replace(/[^a-z0-9]+/gi, '-') + '-' + randomUUID(),
+          sourceType: 'URL', sourceUrl: actualUrl, status: 'ANALYZING', ownerId: user.id } });
+      } else {
+        await tx.site.update({ where: { id: site.id }, data: { status: 'ANALYZING' } });
       }
-    }
-
-    // Ensure siteId is present or create a site on the fly if needed
-    let targetSiteId = siteId;
-    if (!targetSiteId) {
-      let parsedHost = 'site';
-      try {
-        parsedHost = new URL(actualUrl).hostname;
-      } catch (e) {}
-      const site = await prisma.site.create({
-        data: {
-          name: parsedHost,
-          slug: parsedHost.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Math.random().toString(36).substring(2, 7),
-          sourceType: 'URL',
-          sourceUrl: actualUrl,
-          status: 'ANALYZING',
-          ownerId: user.id
-        }
-      });
-      targetSiteId = site.id;
-    } else {
-      await prisma.site.update({
-        where: { id: targetSiteId },
-        data: { status: 'ANALYZING' }
-      });
-    }
-    
-    // Create DB Crawl Record
-    const crawl = await prisma.crawl.create({
-      data: {
-        siteId: targetSiteId,
-        status: 'PENDING',
-        startUrl: actualUrl
-      }
+      const crawl = await tx.crawl.create({ data: { siteId: site.id, status: 'PENDING', startUrl: actualUrl } });
+      await tx.auditLog.create({ data: { actorUserId: user.id, action: 'conversion.started',
+        targetType: 'crawl', targetId: crawl.id, ipHash: 'not-recorded' } });
+      return { crawl, siteId: site.id };
     });
-    
-    // Add job to BullMQ queue with dynamic depth and features
-    await conversionQueue.add('convert-site', {
-      jobId: crawl.id,
-      siteId: targetSiteId,
-      url: actualUrl,
-      crawlDepth: crawlDepth || 2,
-      extractImages: extractImages ?? true,
-      inferRelations: inferRelations ?? true
-    }, {
-      jobId: crawl.id
-    });
-    
-    res.status(201).json({ job: crawl });
-  } catch (error) {
+    try {
+      await conversionQueue.add('convert-site', { jobId: result.crawl.id, siteId: result.siteId, url: actualUrl,
+        crawlDepth: crawlDepth ?? 3, fullSite: fullSite ?? true, maxPages: maxPages ?? 0, maxAssets: maxAssets ?? 0,
+        extractImages: extractImages ?? true, inferRelations: inferRelations ?? true }, { jobId: result.crawl.id });
+    } catch (error) {
+      await prisma.crawl.update({ where: { id: result.crawl.id }, data: { status: 'FAILED' } });
+      throw error;
+    }
+    res.status(201).json({ job: result.crawl });
+  } catch (error: any) {
+    if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
     next(error);
   }
 };
@@ -152,16 +105,24 @@ export const getJobStatus = async (req: Request, res: Response, next: NextFuncti
           }
 
           if (workerDetails && workerDetails.status) {
+            const measured = processingDuration(workerDetails);
+            if (measured !== null && measured !== crawl.durationMs) {
+              await prisma.crawl.update({ where: { id: crawl.id }, data: { durationMs: measured } });
+              crawl.durationMs = measured;
+            }
             const wStatus = (workerDetails.status || '').toUpperCase();
             let targetCrawlStatus: string | null = null;
-            let targetSiteStatus: string | null = null;
+            let targetSiteStatus: SiteStatus | null = null;
 
             if (['COMPLETED', 'VALIDATED', 'READY', 'EXPORTED', 'PACKAGE_APPROVED'].includes(wStatus)) {
               targetCrawlStatus = 'COMPLETED';
               targetSiteStatus = 'READY';
             } else if (['GENERATED', 'GENERATING'].includes(wStatus)) {
               targetCrawlStatus = 'GENERATING';
-              targetSiteStatus = 'GENERATING';
+              targetSiteStatus = 'BUILDING';
+            } else if (wStatus === 'CRAWLED') {
+              targetCrawlStatus = 'CRAWLED';
+              targetSiteStatus = 'ANALYZING';
             } else if (['AWAITING_APPROVAL', 'SCHEMA_PROPOSED'].includes(wStatus)) {
               targetCrawlStatus = 'AWAITING_APPROVAL';
             } else if (wStatus === 'FAILED') {
@@ -228,11 +189,8 @@ export const inferSchema = async (req: Request, res: Response, next: NextFunctio
     const crawl = await prisma.crawl.findUnique({ where: { id } });
     if (!crawl) return res.status(404).json({ error: 'Job not found' });
 
-    if (crawl.logRef) {
-      try {
-        await axios.post(`${WORKER_URL}/api/jobs/${crawl.logRef}/infer-schema`, {}, { timeout: 5000 });
-      } catch (err) {}
-    }
+    if (!crawl.logRef) return res.status(409).json({ error: 'Crawl has not started yet' });
+    await axios.post(`${WORKER_URL}/api/jobs/${crawl.logRef}/infer-schema`, {}, { timeout: 5000 });
 
     const updatedCrawl = await prisma.crawl.update({
       where: { id },
@@ -252,11 +210,8 @@ export const submitSchemaDecision = async (req: Request, res: Response, next: Ne
     const crawl = await prisma.crawl.findUnique({ where: { id } });
     if (!crawl) return res.status(404).json({ error: 'Job not found' });
 
-    if (crawl.logRef) {
-      try {
-        await axios.post(`${WORKER_URL}/api/jobs/${crawl.logRef}/schema-decision`, { decision, feedback }, { timeout: 5000 });
-      } catch (err) {}
-    }
+    if (!crawl.logRef) return res.status(409).json({ error: 'Worker job reference missing' });
+    await axios.post(`${WORKER_URL}/api/jobs/${crawl.logRef}/schema-decision`, { decision, feedback }, { timeout: 5000 });
 
     const updatedCrawl = await prisma.crawl.update({
       where: { id },
@@ -266,7 +221,7 @@ export const submitSchemaDecision = async (req: Request, res: Response, next: Ne
     if (crawl.siteId) {
       await prisma.site.update({
         where: { id: crawl.siteId },
-        data: { status: decision === 'approved' ? 'GENERATING' : 'ANALYZING' }
+        data: { status: decision === 'approved' ? 'BUILDING' : 'ANALYZING' }
       }).catch(() => {});
     }
 
@@ -317,4 +272,3 @@ export const downloadJobZip = async (req: Request, res: Response, next: NextFunc
     res.status(500).json({ error: 'Failed to download project package', details: error.message });
   }
 };
-

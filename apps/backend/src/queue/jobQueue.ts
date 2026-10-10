@@ -12,14 +12,15 @@ export const conversionQueue = new Queue('conversion-jobs', {
 });
 
 const worker = new Worker('conversion-jobs', async (job: Job) => {
-  const { siteId, url, extractImages, crawlDepth } = job.data;
+  const { siteId, url, extractImages, crawlDepth, fullSite, maxPages, maxAssets } = job.data;
+  const crawlId = job.data.jobId || job.id;
   
   logger.info(`Processing job ${job.id} for site ${siteId} with crawl depth ${crawlDepth || 2}`);
   
   try {
     // 1. Update status to PROCESSING
     await prisma.crawl.update({
-      where: { id: job.id },
+      where: { id: crawlId },
       data: { status: 'PROCESSING' }
     });
     await prisma.site.update({
@@ -31,14 +32,17 @@ const worker = new Worker('conversion-jobs', async (job: Job) => {
     const workerUrl = process.env.WORKER_API_URL || 'http://localhost:8000';
     const response = await axios.post(`${workerUrl}/api/jobs`, {
       url: url,
-      crawl_depth: Number(crawlDepth) || 2,
+      crawl_depth: crawlDepth ?? 3,
+      full_site: fullSite ?? true,
+      max_pages: maxPages ?? 0,
+      max_assets: maxAssets ?? 0,
       extract_images: extractImages ?? true
-    });
+    }, { timeout: 15000 });
     
     const workerJobId = response.data.job_id;
     
     await prisma.crawl.update({
-      where: { id: job.id },
+      where: { id: crawlId },
       data: { 
         logRef: workerJobId,
         status: 'PROCESSING'
@@ -52,25 +56,28 @@ const worker = new Worker('conversion-jobs', async (job: Job) => {
     let workerStatus = 'pending';
     let workerJobData: any = null;
 
-    while (attempts < 60) {
+    let consecutiveErrors = 0;
+    while (true) {
       await delay(2000);
       attempts++;
       try {
-        const pollRes = await axios.get(`${workerUrl}/api/jobs/${workerJobId}`);
+        const pollRes = await axios.get(`${workerUrl}/api/jobs/${workerJobId}`, { timeout: 10000 });
         workerJobData = pollRes.data.job || {};
+        consecutiveErrors = 0;
         workerStatus = (pollRes.data.status || workerJobData.status || '').toLowerCase();
         
-        if (['crawled', 'awaiting_approval', 'validated', 'completed', 'failed', 'error'].includes(workerStatus)) {
+        if (['crawled', 'awaiting_approval', 'validated', 'completed', 'failed', 'error', 'cancelled'].includes(workerStatus)) {
           break;
         }
       } catch (pollErr: any) {
         logger.warn(`Polling worker job ${workerJobId} attempt ${attempts} warning: ${pollErr.message}`);
+        if (++consecutiveErrors >= 15) throw new Error('Worker unavailable while polling conversion');
       }
     }
 
     // 4. Save results to DB
     const crawlArtifacts = workerJobData?.crawl_artifacts || {};
-    const pagesCrawled = crawlArtifacts?.totals?.pages_crawled || workerJobData?.crawled_pages?.length || (workerJobData?.crawl_artifacts?.pages?.length || 1);
+    const pagesCrawled = crawlArtifacts?.totals?.pages_crawled || workerJobData?.crawled_pages?.length || (workerJobData?.crawl_artifacts?.pages?.length || 0);
     const getLength = (obj: any) => Array.isArray(obj) ? obj.length : (obj && typeof obj === 'object' ? Object.keys(obj).length : 0);
     const assetsDiscovered = crawlArtifacts?.totals?.assets_downloaded || workerJobData?.counts_by_kind?.assets || crawlArtifacts?.asset_count || getLength(crawlArtifacts?.assets) || 0;
     
@@ -79,14 +86,14 @@ const worker = new Worker('conversion-jobs', async (job: Job) => {
       dbStatus = 'CRAWLED';
     } else if (workerStatus === 'awaiting_approval') {
       dbStatus = 'AWAITING_APPROVAL';
-    } else if (workerStatus === 'failed' || workerStatus === 'error') {
+    } else if (['failed', 'error', 'cancelled'].includes(workerStatus)) {
       dbStatus = 'FAILED';
     } else if (['validated', 'completed', 'ready'].includes(workerStatus)) {
       dbStatus = 'COMPLETED';
     }
 
     await prisma.crawl.update({
-      where: { id: job.id },
+      where: { id: crawlId },
       data: {
         status: dbStatus,
         pagesCrawled,
@@ -152,7 +159,7 @@ const worker = new Worker('conversion-jobs', async (job: Job) => {
 
     await prisma.site.update({
       where: { id: siteId },
-      data: { status: 'READY', previewUrl: url }
+      data: { status: dbStatus === 'COMPLETED' ? 'READY' : dbStatus === 'FAILED' ? 'FAILED' : 'ANALYZING' }
     });
 
     logger.info(`Job ${job.id} fully completed and persisted to PostgreSQL!`);
@@ -161,7 +168,7 @@ const worker = new Worker('conversion-jobs', async (job: Job) => {
     logger.error(`Error processing job ${job.id}: ${error.message}`);
     
     await prisma.crawl.update({
-      where: { id: job.id },
+      where: { id: crawlId },
       data: { status: 'FAILED' }
     });
     await prisma.site.update({
@@ -184,4 +191,3 @@ worker.on('failed', (job: Job | undefined, err: Error) => {
     logger.error(`Job ${job.id} has failed with ${err.message}`);
   }
 });
-

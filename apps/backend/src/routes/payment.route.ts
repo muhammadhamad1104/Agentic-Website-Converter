@@ -11,7 +11,7 @@ router.post(
   '/webhook',
   express.raw({ type: 'application/json' }),
   (req: Request, res: Response, next: NextFunction) => {
-    (req as any).rawBody = req.body;
+    if (!(req as any).rawBody) (req as any).rawBody = req.body;
     next();
   },
   handleWebhook
