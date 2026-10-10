@@ -35,6 +35,14 @@ describe('Converted application workspace', () => {
     expect(screen.getByTitle('Advisory preview')).toHaveAttribute('src', preview.url);
     fireEvent.click(screen.getByRole('button', { name: 'Stop' })); expect(preview.stop).toHaveBeenCalledTimes(1);
   });
+  it('shows concrete preview startup progress instead of an indefinite spinner', () => {
+    preview = { status: 'starting', stage: 'build', message: 'Building the generated interface', progress: 82, elapsedSeconds: 34,
+      start: vi.fn(), stop: vi.fn() };
+    show();
+    expect(screen.getByText('Building the generated interface')).toBeInTheDocument();
+    expect(screen.getByText('34s elapsed')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Preview startup progress' })).toHaveAttribute('aria-valuenow', '82');
+  });
   it('requires an exact name before permitting project deletion', () => {
     HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.setAttribute('open', ''); });
     show(); fireEvent.click(screen.getByRole('button', { name: 'Delete project' }));

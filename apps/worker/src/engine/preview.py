@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import os
 import secrets
@@ -13,6 +14,7 @@ import threading
 import time
 from pathlib import Path
 
+from src.config.settings import settings
 from src.engine.package_builder import write_runtime_project
 from src.engine.preserved_site import generate_preserved_site
 
@@ -40,6 +42,8 @@ class PreviewManager:
             if previous:
                 self._stop(owner, previous["leaseId"])
             session = {"leaseId": lease, "jobId": job["job_id"], "status": "starting",
+                       "stage": "queued", "message": "Preparing an isolated preview", "progress": 4,
+                       "startedAt": int(time.time() * 1000),
                        "touched": time.monotonic(), "cancel": threading.Event(),
                        "process": None, "root": None}
             self.sessions[owner] = session
@@ -60,7 +64,18 @@ class PreviewManager:
 
     @staticmethod
     def _public(session):
-        return {key: session[key] for key in ("leaseId", "status", "url", "error") if key in session}
+        result = {key: session[key] for key in
+                  ("leaseId", "status", "stage", "message", "progress", "startedAt", "url", "error")
+                  if key in session}
+        if "startedAt" in session:
+            result["elapsedSeconds"] = max(0, int((time.time() * 1000 - session["startedAt"]) / 1000))
+        return result
+
+    def _stage(self, session, stage, message, progress):
+        with self.lock:
+            if session["cancel"].is_set():
+                raise InterruptedError()
+            session.update(stage=stage, message=message, progress=progress)
 
     def stop(self, owner, lease):
         with self.lock:
@@ -103,7 +118,54 @@ class PreviewManager:
             session["process"] = process
             return process
 
+    @staticmethod
+    def _frontend_fingerprint(root):
+        digest = hashlib.sha256()
+        frontend = root / "frontend"
+        for path in sorted(frontend.rglob("*")):
+            if not path.is_file() or any(part in {"node_modules", "dist"} for part in path.relative_to(frontend).parts):
+                continue
+            digest.update(str(path.relative_to(frontend)).encode())
+            digest.update(path.read_bytes())
+        return digest.hexdigest()
+
+    @staticmethod
+    def _validated_project(job):
+        report = job.get("validation_report") or {}
+        if report.get("build_status") != "passed" or not report.get("project_dir"):
+            return None
+        try:
+            generated = Path(settings.GENERATED_OUTPUT_PATH).resolve()
+            expected = (generated / ("validation_" + str(job["job_id"]))).resolve()
+            candidate = Path(report["project_dir"]).resolve()
+            if candidate != expected or not candidate.is_dir():
+                return None
+            return candidate
+        except (KeyError, OSError, RuntimeError, TypeError, ValueError):
+            return None
+
+    def _reuse_validated_build(self, session, job, root):
+        candidate = self._validated_project(job)
+        if candidate is None:
+            return False, False
+        pairs = [(candidate / name / "package.json", root / name / "package.json",
+                  candidate / name / "node_modules", root / name / "node_modules")
+                 for name in ("backend", "frontend")]
+        if not all(source_package.is_file() and target_package.is_file() and modules.is_dir() and
+                   source_package.read_bytes() == target_package.read_bytes()
+                   for source_package, target_package, modules, _target_modules in pairs):
+            return False, False
+        self._stage(session, "dependencies", "Reusing validated dependencies", 28)
+        for _source_package, _target_package, modules, target_modules in pairs:
+            target_modules.symlink_to(modules, target_is_directory=True)
+        validated_dist = candidate / "frontend" / "dist"
+        same_frontend = validated_dist.is_dir() and self._frontend_fingerprint(candidate) == self._frontend_fingerprint(root)
+        if same_frontend:
+            shutil.copytree(validated_dist, root / "frontend" / "dist")
+        return True, same_frontend
+
     def _prepare(self, session, job):
+        self._stage(session, "project", "Assembling the generated application", 10)
         root = Path(tempfile.mkdtemp(prefix="converter-preview-"))
         session["root"] = root
         # Do not execute arbitrary generated backend files or package scripts.
@@ -113,14 +175,21 @@ class PreviewManager:
         env.update(DATABASE_URL="file:./preview.db", HOST="127.0.0.1", PORT="0",
                    ADMIN_EMAIL="preview@example.invalid", ADMIN_PASSWORD=secrets.token_urlsafe(32),
                    PREVIEW_MODE="1")
-        commands = [
-            ("backend", ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]),
-            ("frontend", ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]),
-            ("backend", ["npm", "run", "setup"]),
-            ("frontend", ["npm", "run", "build"]),
+        reused_dependencies, reused_frontend = self._reuse_validated_build(session, job, root)
+        commands = [] if reused_dependencies else [
+            ("dependencies", "Installing backend dependencies", 20, "backend",
+             ["npm", "install", "--ignore-scripts", "--prefer-offline", "--no-audit", "--no-fund"]),
+            ("dependencies", "Installing frontend dependencies", 42, "frontend",
+             ["npm", "install", "--ignore-scripts", "--prefer-offline", "--no-audit", "--no-fund"]),
         ]
+        commands.append(("database", "Initializing the preview database", 66, "backend",
+                         (["node", "node_modules/prisma/build/index.js", "db", "push", "--skip-generate"]
+                          if reused_dependencies else ["npm", "run", "setup"])))
+        if not reused_frontend:
+            commands.append(("build", "Building the generated interface", 82, "frontend", ["npm", "run", "build"]))
         with (root / "setup.log").open("w") as log:
-            for directory, command in commands:
+            for stage, message, progress, directory, command in commands:
+                self._stage(session, stage, message, progress)
                 process = self._spawn(session, command, root / directory, env, log)
                 try:
                     code = process.wait(timeout=300)
@@ -130,9 +199,10 @@ class PreviewManager:
                 if session["cancel"].is_set():
                     raise InterruptedError()
                 if code:
-                    raise ValueError("Preview setup failed during " + directory + " " + " ".join(command[:3]))
+                    raise ValueError(message + " failed. Retry the preview; if it repeats, check the worker logs.")
         log_path = root / "runtime.log"
         with log_path.open("w") as log:
+            self._stage(session, "launch", "Starting the generated application", 94)
             process = self._spawn(session, ["node", "src/index.js"], root / "backend", env, log)
             for _ in range(300):
                 if session["cancel"].wait(.1):
@@ -154,7 +224,7 @@ class PreviewManager:
             with self.lock:
                 if session["cancel"].is_set():
                     raise InterruptedError()
-                session.update(status="ready", url=url)
+                session.update(status="ready", stage="ready", message="Preview ready", progress=100, url=url)
             session["cancel"].wait()
         except InterruptedError:
             pass

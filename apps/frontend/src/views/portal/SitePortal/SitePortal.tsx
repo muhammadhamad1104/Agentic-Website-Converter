@@ -76,7 +76,13 @@ export default function SitePortal() {
           <div className="workspace-actions">
             <button className="btn btn-secondary btn-sm" onClick={preview.stop}><Square size={13} />Stop</button></div></div>}
         {preview.status === 'ready' && preview.url ? <PreviewBrowser key={preview.url} url={preview.url} sourceUrl={site.sourceUrl} title={site.name + ' preview'} /> :
-          <div className="empty-view" role="status">{preview.status === 'starting' ? <><Loader2 className="animate-spin" size={28} /><p>Starting the generated application...</p></> : preview.status === 'stopped' ? <><Globe2 size={29} strokeWidth={1.2} /><p>{site.hasArtifacts ? 'Ready to preview.' : 'Your application is not ready yet.'}</p><button className="btn btn-secondary" disabled={!site.hasArtifacts} onClick={preview.start}><Play size={14} />Start preview</button></> : <><p>{preview.error || 'The preview could not be started.'}</p><button className="btn btn-secondary" disabled={!site.hasArtifacts} onClick={preview.start}><Play size={14} />Retry preview</button></>}</div>}
+          <div className="empty-view" role="status">{preview.status === 'starting' ? <div className="preview-startup">
+            <div className="preview-startup-heading"><Loader2 className="animate-spin" size={22} /><div><strong>{preview.message || 'Starting the generated application'}</strong>
+              <span>{preview.elapsedSeconds ? preview.elapsedSeconds + 's elapsed' : 'Starting now'}</span></div><b>{Math.round(preview.progress || 0)}%</b></div>
+            <div className="preview-progress" aria-label="Preview startup progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(preview.progress || 0)} role="progressbar">
+              <span style={{ width: Math.max(4, Math.min(100, preview.progress || 0)) + '%' }} /></div>
+            <p>The first launch may take a few minutes. This page will update as each build stage completes.</p>
+          </div> : preview.status === 'stopped' ? <><Globe2 size={29} strokeWidth={1.2} /><p>{site.hasArtifacts ? 'Ready to preview.' : 'Your application is not ready yet.'}</p><button className="btn btn-secondary" disabled={!site.hasArtifacts} onClick={preview.start}><Play size={14} />Start preview</button></> : <><p>{preview.error || 'The preview could not be started.'}</p><button className="btn btn-secondary" disabled={!site.hasArtifacts} onClick={preview.start}><Play size={14} />Retry preview</button></>}</div>}
       </section>
         </Tabs.Content>
         <Tabs.Content value="schema" className="workspace-tab-panel"><p className="muted project-view-count">{stats.editableFields == null ? 'Fields not measured' : stats.editableFields + ' editable fields'}</p>

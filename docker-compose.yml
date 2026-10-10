@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:15-alpine
@@ -35,6 +33,7 @@ services:
       retries: 5
 
   backend:
+    pull_policy: build
     build: 
       context: ./apps/backend
       dockerfile: Dockerfile
@@ -77,6 +76,7 @@ services:
     restart: unless-stopped
 
   worker:
+    pull_policy: build
     build:
       context: ./apps/worker
       dockerfile: Dockerfile
@@ -119,6 +119,7 @@ services:
     restart: unless-stopped
 
   frontend:
+    pull_policy: build
     build:
       context: ./apps/frontend
       dockerfile: Dockerfile

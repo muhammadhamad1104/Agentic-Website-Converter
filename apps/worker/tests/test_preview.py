@@ -88,3 +88,25 @@ def test_setup_failure_is_reported(manager):
     manager.start("owner", "lease", {"job_id": "job"})
     eventually(lambda: manager.status("owner", "lease")["status"] == "failed")
     assert manager.status("owner", "lease")["error"] == "Test preparation failed"
+
+
+def test_startup_stage_and_elapsed_time_are_public(manager):
+    entered = threading.Event()
+    released = threading.Event()
+    def prepare(session, job):
+        manager._stage(session, "build", "Building the generated interface", 82)
+        entered.set()
+        released.wait(2)
+        return "http://127.0.0.1:12345"
+    manager.prepare = prepare
+    started = manager.start("owner", "lease", {"job_id": "job"})
+    assert started["stage"] == "queued"
+    assert started["progress"] == 4
+    assert entered.wait(2)
+    current = manager.status("owner", "lease")
+    assert current["message"] == "Building the generated interface"
+    assert current["progress"] == 82
+    assert current["elapsedSeconds"] >= 0
+    released.set()
+    eventually(lambda: manager.status("owner", "lease")["status"] == "ready")
+    assert manager.status("owner", "lease")["progress"] == 100

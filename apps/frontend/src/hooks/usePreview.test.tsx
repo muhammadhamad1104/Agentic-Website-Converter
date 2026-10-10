@@ -45,6 +45,17 @@ describe('Preview lifecycle', () => {
     expect(hook.result.current.url).toBe('original-capability');
     hook.unmount();
   });
+  it('reports the current worker startup stage', async () => {
+    post.mockResolvedValue({ data: { status: 'starting', stage: 'dependencies', message: 'Installing frontend dependencies', progress: 42, elapsedSeconds: 8 } });
+    put.mockResolvedValue({ data: { status: 'starting', stage: 'build', message: 'Building the generated interface', progress: 82, elapsedSeconds: 13 } });
+    vi.useFakeTimers();
+    const hook = renderHook(() => usePreview('job-1'));
+    await act(async () => { await hook.result.current.start(); });
+    expect(hook.result.current).toMatchObject({ status: 'starting', progress: 42, message: 'Installing frontend dependencies' });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(hook.result.current).toMatchObject({ progress: 82, message: 'Building the generated interface', elapsedSeconds: 13 });
+    hook.unmount();
+  });
   it('keeps the same preview through a temporary heartbeat failure', async () => {
     vi.useFakeTimers();
     post.mockResolvedValue({ data: { status: 'ready', url: 'original' } });

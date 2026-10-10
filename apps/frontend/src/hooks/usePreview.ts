@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../services/api';
 
-type Preview = { status: 'stopped' | 'starting' | 'ready' | 'failed'; url?: string; error?: string };
+type Preview = { status: 'stopped' | 'starting' | 'ready' | 'failed'; url?: string; error?: string;
+  stage?: string; message?: string; progress?: number; startedAt?: number; elapsedSeconds?: number };
 type Lease = { path: string; token: string | null; missed: number };
 
 function release(lease: Lease) {
@@ -54,7 +55,8 @@ export function usePreview(jobId?: string) {
     if (lease.current) await stop();
     const current = { path: '/jobs/' + jobId + '/preview/' + crypto.randomUUID(), token: localStorage.getItem('token'), missed: 0 };
     lease.current = current;
-    setPreview({ status: 'starting' });
+    setPreview({ status: 'starting', stage: 'queued', message: 'Preparing an isolated preview', progress: 4,
+      startedAt: Date.now(), elapsedSeconds: 0 });
     try {
       const result = await api.post(current.path);
       if (lease.current === current) setPreview(result.data);
