@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowRight, Loader2, Terminal, Database, Server, Clock, CheckCircle } from 'lucide-react';
+import ProgressPanel, { generatedFileCount } from './ProgressPanel';
+import { ArrowRight, Loader2 } from 'lucide-react';
 import { useJobStore } from '../../../../store/jobStore';
-import toast from 'react-hot-toast';
 
 export default function Step6Generate({ onNext, jobId }: { onNext: () => void, jobId?: string | null }) {
-  const [progress, setProgress] = useState(15);
-  const [status, setStatus] = useState<'running' | 'complete' | 'failed'>('running');
+  const [status, setStatus] = useState<'running' | 'complete' | 'warnings' | 'failed'>('running');
+  const canDownload = status === 'complete' || status === 'warnings';
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [logs, setLogs] = useState<Array<{ timestamp: string; level: 'info' | 'success' | 'warn' | 'node'; text: string }>>([
     { timestamp: new Date().toLocaleTimeString(), level: 'info', text: 'Initializing LangGraph Code Generation Workflow...' }
@@ -79,13 +78,8 @@ export default function Step6Generate({ onNext, jobId }: { onNext: () => void, j
         if (realArtifacts?.prisma_schema && models === 0) {
           models = (realArtifacts.prisma_schema.match(/model\s+\w+/g) || []).length;
         }
-        if (realArtifacts?.backend) {
-          // rough estimate based on routes
-          apiRoutes = models * 5; 
-        }
-        if (realArtifacts?.frontend) {
-          components = Object.keys(realArtifacts.frontend).length || models * 3;
-        }
+        apiRoutes = generatedFileCount(realArtifacts?.backend);
+        components = generatedFileCount(realArtifacts?.frontend);
 
         const genTraces = traces.filter((t: any) => GEN_NODES.has(t.node));
 
@@ -127,15 +121,13 @@ export default function Step6Generate({ onNext, jobId }: { onNext: () => void, j
         }
 
         // Completion logic
-        const lastTrace = genTraces.length > 0 ? genTraces[genTraces.length - 1] : null;
-        const traceFinished = lastTrace && lastTrace.node === 'validation_review_gate' && lastTrace.output_status === 'package_approved';
-        const isFinished = ['VALIDATED', 'COMPLETED', 'READY'].includes(currentStatus) || 
-                           ['validated', 'completed', 'ready', 'generated', 'success', 'package_approved'].includes(workerStatus) || traceFinished;
+        const isFinished = workerJob.validation_report?.validation_gate === 'open' &&
+                           workerJob.validation_report?.build_status === 'passed' &&
+                           ['validated', 'completed', 'ready'].includes(workerStatus);
 
         if (isFinished) {
           genFinished = true;
-          setProgress(100);
-          setStatus('complete');
+          setStatus(workerJob.validation_report?.issues?.length ? 'warnings' : 'complete');
           setLogs(prev => {
             const lastText = `[MCP:Complete] Full-stack codebase generated successfully!`;
             if (prev.some(l => l.text === lastText)) return prev;
@@ -144,21 +136,18 @@ export default function Step6Generate({ onNext, jobId }: { onNext: () => void, j
           if (intervalRef) clearInterval(intervalRef);
         } else if (currentStatus === 'FAILED' || workerStatus === 'failed') {
           genFinished = true;
-          setStatus('failed');
+          const hasFiles = Boolean(realArtifacts?.backend || realArtifacts?.frontend || realArtifacts?.admin);
+          setStatus(hasFiles ? 'warnings' : 'failed');
           setLogs(prev => {
-            const failText = `[Agent:Error] Code generation failed. Check worker logs.`;
+            const blockers = (workerJob.validation_report?.issues || [])
+              .filter((issue: any) => issue.severity === 'blocker')
+              .map((issue: any) => issue.message);
+            const details = [...new Set([...blockers, ...(workerJob.errors || [])])].join(' ');
+            const failText = `[Agent:Error] ${details || 'Generation failed before validation completed.'}`;
             if (prev.some(l => l.text === failText)) return prev;
             return [...prev, { timestamp: new Date().toLocaleTimeString(), level: 'warn', text: failText }];
           });
           if (intervalRef) clearInterval(intervalRef);
-        } else {
-          // Dynamic progress
-          let p = 20;
-          if (workerJob.generated_artifacts?.backend) p = 40;
-          if (workerJob.generated_artifacts?.frontend) p = 70;
-          if (workerJob.generated_artifacts?.admin) p = 85;
-          if (genTraces.some(t => t.node === 'validate_build_smoke')) p = 95;
-          setProgress(p);
         }
       } catch (err) {
         // network errors ignored
@@ -181,168 +170,7 @@ export default function Step6Generate({ onNext, jobId }: { onNext: () => void, j
     return `${mins}m ${remainder}s`;
   };
 
-  return (
-    <>
-      <div className="step-header" style={{ marginBottom: '1rem' }}>
-        <h2 className="step-title">Agentic Code Generation</h2>
-        <p className="step-subtitle">Real-time code synthesis, automated consistency validation, and AST compilation.</p>
-      </div>
-
-      <div className="step-content" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', width: '100%' }}>
-        <div style={{ maxWidth: '640px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '1.25rem', width: '100%' }}>
-
-          {/* 4 Telemetry Metrics Cards Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
-            <div style={{
-              background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: '12px', padding: '0.875rem 1rem', display: 'flex', flexDirection: 'column', gap: '4px'
-            }}>
-              <span style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Database size={13} style={{ color: '#818cf8' }} /> Models Generated
-              </span>
-              <span style={{ fontSize: '20px', fontWeight: 800, color: '#818cf8', fontFamily: 'monospace' }}>
-                {telemetry.models}
-              </span>
-            </div>
-            <div style={{
-              background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: '12px', padding: '0.875rem 1rem', display: 'flex', flexDirection: 'column', gap: '4px'
-            }}>
-              <span style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Server size={13} style={{ color: '#38bdf8' }} /> API Routes Created
-              </span>
-              <span style={{ fontSize: '20px', fontWeight: 800, color: '#38bdf8', fontFamily: 'monospace' }}>
-                {telemetry.apiRoutes}
-              </span>
-            </div>
-            <div style={{
-              background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: '12px', padding: '0.875rem 1rem', display: 'flex', flexDirection: 'column', gap: '4px'
-            }}>
-              <span style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Clock size={13} style={{ color: '#a855f7' }} /> Time Elapsed
-              </span>
-              <span style={{ fontSize: '20px', fontWeight: 800, color: '#c084fc', fontFamily: 'monospace' }}>
-                {formatElapsedTime(elapsedSeconds)}
-              </span>
-            </div>
-            <div style={{
-              background: 'rgba(15, 23, 42, 0.7)', border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: '12px', padding: '0.875rem 1rem', display: 'flex', flexDirection: 'column', gap: '4px'
-            }}>
-              <span style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <CheckCircle size={13} style={{ color: status === 'complete' ? '#34d399' : '#fbbf24' }} /> Status
-              </span>
-              <span style={{
-                fontSize: '11px', fontWeight: 700, fontFamily: 'monospace',
-                color: status === 'complete' ? '#34d399' : '#fbbf24', marginTop: '4px'
-              }}>
-                {status === 'complete' ? 'COMPLETE 100%' : 'SYNTHESIZING...'}
-              </span>
-            </div>
-          </div>
-
-          {/* Dynamic Progress Bar Container */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontFamily: 'monospace', color: '#94a3b8' }}>
-              <span>Generation Progress</span>
-              <span style={{ color: '#818cf8', fontWeight: 700 }}>{Math.round(progress)}% Complete</span>
-            </div>
-            <div style={{ width: '100%', height: '8px', borderRadius: '9999px', background: '#1e293b', overflow: 'hidden' }}>
-              <div style={{
-                width: `${progress}%`, height: '100%', borderRadius: '9999px',
-                background: 'linear-gradient(90deg, #4f46e5 0%, #818cf8 100%)',
-                transition: 'width 0.4s ease', boxShadow: '0 0 12px rgba(99, 102, 241, 0.6)'
-              }} />
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            {/* Terminal Execution Trace Console */}
-            <div style={{
-              background: '#090d16', border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: '14px', overflow: 'hidden', boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
-              display: 'flex', flexDirection: 'column'
-            }}>
-              <div style={{
-                background: 'rgba(15, 23, 42, 0.9)', padding: '0.625rem 1rem', borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                fontSize: '12px', color: '#94a3b8', fontFamily: 'monospace'
-              }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Terminal size={14} style={{ color: '#818cf8' }} />
-                  MCP & LangGraph Agent Trace Console
-                </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#34d399' }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '9999px', background: '#34d399' }} />
-                  Live Output Stream
-                </span>
-              </div>
-
-              <div
-                ref={consoleRef}
-                style={{
-                  padding: '1rem', fontFamily: 'monospace', fontSize: '12px',
-                  maxHeight: '280px', minHeight: '280px', overflowY: 'auto',
-                  display: 'flex', flexDirection: 'column', gap: '6px', background: '#090d16'
-                }}
-              >
-                <AnimatePresence>
-                  {logs.map((log, idx) => {
-                    const isWarn = log.level === 'warn';
-                    const isSuccess = log.level === 'success';
-                    const isNode = log.level === 'node';
-                    return (
-                      <motion.div
-                        key={idx + log.text}
-                        initial={{ opacity: 0, x: -6 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', lineHeight: 1.5 }}
-                      >
-                        <span style={{ color: '#64748b', flexShrink: 0, fontSize: '10px', paddingTop: '2px' }}>{log.timestamp}</span>
-                        <span style={{
-                          color: isWarn ? '#fbbf24' : isSuccess ? '#34d399' : isNode ? '#a5b4fc' : '#e2e8f0',
-                          fontWeight: isSuccess || isWarn ? 700 : 400
-                        }}>
-                          {log.text}
-                        </span>
-                      </motion.div>
-                    );
-                  })}
-                </AnimatePresence>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
-
-      <div className="step-actions" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '1rem' }}>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#94a3b8', fontFamily: 'monospace' }}>
-            {status !== 'complete' && <Loader2 size={14} className="animate-spin" style={{ color: '#fbbf24' }} />}
-            <span>{status === 'complete' ? 'Codebase generated successfully!' : 'Agent synthesizing full-stack application...'}</span>
-          </div>
-        </div>
-        <button
-          type="button"
-          className={`btn btn-primary transition-all duration-200 ${status === 'complete' ? 'shadow-lg shadow-indigo-500/20' : 'cursor-prohibited-red'}`}
-          onClick={async (e) => {
-            if (status !== 'complete') {
-              e.preventDefault();
-              toast.error("Full-stack code generation is in progress. Please wait for 100% completion.");
-            } else {
-              onNext();
-            }
-          }}
-        >
-          {status === 'complete' ? (
-            <>Proceed to Download <ArrowRight size={16} /></>
-          ) : (
-            <><Loader2 size={16} className="animate-spin mr-1" /> Generating Code...</>
-          )}
-        </button>
-      </div>
-    </>
-  );
+  return <>
+    <ProgressPanel status={status} elapsed={formatElapsedTime(elapsedSeconds)} logs={logs} metrics={[{ label: 'Content models', value: telemetry.models }, { label: 'Backend files', value: telemetry.apiRoutes }, { label: 'Frontend files', value: telemetry.components }]} />
+    <div className="step-actions"><button className="btn btn-primary" disabled={!canDownload} onClick={onNext}>{canDownload ? <>Proceed to Download <ArrowRight size={16} /></> : status === 'running' ? <><Loader2 size={16} className="animate-spin" />Generating Code...</> : 'No files available'}</button></div></>;
 }

@@ -74,6 +74,7 @@ export const useJobStore = create<JobState>()(
           toast.success('Analyzing website structure & inferring schema...');
         } catch (err) {
           toast.error('Failed to trigger schema inference');
+          throw err;
         }
       },
 
