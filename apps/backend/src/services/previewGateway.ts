@@ -48,6 +48,7 @@ export function createPreviewGateway() {
         data: req.body, responseType: 'stream', timeout: 30000, maxRedirects: 0, validateStatus: () => true,
         headers: { 'X-Preview-Secret': process.env.PREVIEW_API_SECRET, 'X-Preview-Owner': session.owner,
           'Content-Type': req.headers['content-type'] || 'application/octet-stream',
+          ...(/^\/api\/admin(?:\/|$)/.test(req.path) && req.headers.authorization ? { Authorization: req.headers.authorization } : {}),
           Cookie: cookies, Accept: req.headers.accept || '*/*', ...(req.headers.range ? { Range: req.headers.range } : {}) },
       });
       res.status(response.status);

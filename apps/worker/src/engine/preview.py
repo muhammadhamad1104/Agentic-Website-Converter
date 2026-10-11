@@ -5,7 +5,6 @@ import atexit
 import hashlib
 import json
 import os
-import secrets
 import shutil
 import signal
 import subprocess
@@ -130,6 +129,23 @@ class PreviewManager:
         return digest.hexdigest()
 
     @staticmethod
+    def _database_url(root):
+        # Prisma resolves relative SQLite URLs against the generated client's
+        # schema location. That location changes when validated dependencies
+        # are reused through a symlink, so previews must use an absolute URL.
+        database = (root / "backend" / "prisma" / "preview.db").resolve()
+        return "file:" + database.as_posix()
+
+    @staticmethod
+    def _log_excerpt(path):
+        try:
+            lines = [line.strip() for line in path.read_text(errors="replace").splitlines() if line.strip()]
+            useful = [line for line in lines if len(line) <= 500]
+            return " | ".join(useful[-10:])[-2000:]
+        except OSError:
+            return ""
+
+    @staticmethod
     def _validated_project(job):
         report = job.get("validation_report") or {}
         if report.get("build_status") != "passed" or not report.get("project_dir"):
@@ -172,8 +188,8 @@ class PreviewManager:
         artifacts = generate_preserved_site(job)
         write_runtime_project(root, artifacts, job["job_id"])
         env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "SystemRoot") if key in os.environ}
-        env.update(DATABASE_URL="file:./preview.db", HOST="127.0.0.1", PORT="0",
-                   ADMIN_EMAIL="preview@example.invalid", ADMIN_PASSWORD=secrets.token_urlsafe(32),
+        env.update(DATABASE_URL=self._database_url(root), HOST="127.0.0.1", PORT="0",
+                   ADMIN_EMAIL="admin@gmail.com", ADMIN_PASSWORD="admin123",
                    PREVIEW_MODE="1")
         reused_dependencies, reused_frontend = self._reuse_validated_build(session, job, root)
         commands = [] if reused_dependencies else [
@@ -208,6 +224,8 @@ class PreviewManager:
                 if session["cancel"].wait(.1):
                     raise InterruptedError()
                 if process.poll() is not None:
+                    excerpt = self._log_excerpt(log_path)
+                    print(f"[Preview {job['job_id']}] Runtime exited during startup: {excerpt or 'no output'}", flush=True)
                     raise ValueError("Preview exited during startup.")
                 for line in log_path.read_text().splitlines():
                     try:

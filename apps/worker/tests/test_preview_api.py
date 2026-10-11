@@ -41,3 +41,19 @@ def test_proxy_uses_registered_runtime_and_keeps_query_parameters(monkeypatch):
     assert called["allow_redirects"] is False
     assert "authorization" not in called["headers"]
     assert "Content-Encoding" not in response.headers
+
+
+def test_proxy_forwards_admin_session_only_to_admin_routes(monkeypatch):
+    monkeypatch.setattr(settings, "PREVIEW_API_SECRET", "private")
+    monkeypatch.setattr(main.previews, "status", lambda *_args: {"status": "ready", "url": "http://127.0.0.1:12345"})
+    forwarded = []
+    def upstream(_method, _url, **kwargs):
+        forwarded.append(kwargs["headers"])
+        return SimpleNamespace(content=b"[]", status_code=200, headers={"Content-Type": "application/json"})
+    monkeypatch.setattr(main.requests, "request", upstream)
+    client = TestClient(main.app)
+    headers = {"X-Preview-Secret": "private", "X-Preview-Owner": "owner", "Authorization": "Bearer generated-admin-session"}
+    for path in ("api/admin/pages", "api/administrator", "__site/services"):
+        assert client.get("/api/previews/" + LEASE + "/proxy/" + path, headers=headers).status_code == 200
+    assert forwarded[0]["authorization"] == "Bearer generated-admin-session"
+    assert all("authorization" not in item for item in forwarded[1:])

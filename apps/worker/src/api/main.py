@@ -46,6 +46,8 @@ async def preview_proxy(lease_id: UUID, path: str, request: Request,
     if len(body) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Preview request is too large")
     headers = {key: value for key, value in request.headers.items() if key.lower() in {"content-type", "cookie", "range", "accept"}}
+    if (path == "api/admin" or path.startswith("api/admin/")) and request.headers.get("authorization"):
+        headers["authorization"] = request.headers["authorization"]
     try:
         upstream = await asyncio.to_thread(requests.request, request.method, state["url"] + "/" + path,
             params=list(request.query_params.multi_items()), headers=headers, data=body, timeout=25, allow_redirects=False)

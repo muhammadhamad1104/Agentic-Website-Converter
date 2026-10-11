@@ -110,3 +110,15 @@ def test_startup_stage_and_elapsed_time_are_public(manager):
     released.set()
     eventually(lambda: manager.status("owner", "lease")["status"] == "ready")
     assert manager.status("owner", "lease")["progress"] == 100
+
+
+def test_preview_database_uses_absolute_sqlite_url(tmp_path):
+    url = PreviewManager._database_url(tmp_path)
+    assert url == "file:" + (tmp_path / "backend" / "prisma" / "preview.db").resolve().as_posix()
+    assert url.startswith("file:/")
+
+
+def test_log_excerpt_omits_generated_minified_lines(tmp_path):
+    log = tmp_path / "runtime.log"
+    log.write_text("x" * 600 + "\nUseful failure\nNode.js v22\n")
+    assert PreviewManager._log_excerpt(log) == "Useful failure | Node.js v22"

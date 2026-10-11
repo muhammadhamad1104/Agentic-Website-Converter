@@ -50,6 +50,18 @@ test('does not change the captured website HTML', async () => {
   const page = await request(gateway).get('/__site/services?view=1').set('Cookie', open.headers['set-cookie']);
   expect(page.text).toBe(html);
 });
+test('forwards the generated admin session only to admin API routes', async () => {
+  const link = new URL(previewLink({ headers: { origin: 'http://localhost:5173' } } as any, 'owner', 'lease'));
+  const open = await request(gateway).get(link.pathname + link.search);
+  for (const path of ['/api/admin/pages', '/api/administrator', '/__site/services']) {
+    (axios as unknown as jest.Mock).mockResolvedValueOnce({ status: 200, headers: { 'content-type': 'application/json' }, data: Readable.from(['[]']) });
+    expect((await request(gateway).get(path).set('Cookie', open.headers['set-cookie']).set('Authorization', 'Bearer generated-admin-session')).status).toBe(200);
+  }
+  const calls = (axios as unknown as jest.Mock).mock.calls;
+  expect(calls[0][0].headers.Authorization).toBe('Bearer generated-admin-session');
+  expect(calls[1][0].headers.Authorization).toBeUndefined();
+  expect(calls[2][0].headers.Authorization).toBeUndefined();
+});
 test('serves only a static route-observer script without accessing private worker data', async () => {
   const script = await request(gateway).get('/__preview/navigation.js');
   expect(script.status).toBe(200);
