@@ -69,9 +69,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./apps/backend/src:/app/src
-      - ./apps/backend/dist:/app/dist
     command: node dist/server.js
     restart: unless-stopped
 
