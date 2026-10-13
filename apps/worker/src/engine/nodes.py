@@ -16,9 +16,9 @@ from collections.abc import Mapping
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from urllib.parse import urldefrag, urljoin, urlparse
+from urllib.parse import urldefrag, urljoin, urlparse, quote
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, UnicodeDammit
 import requests
 
 from src.config.settings import settings
@@ -28,6 +28,7 @@ from src.engine.state import ConversionState
 from src.engine.template_structure import materialize_template_structure
 from src.engine.generation_models import FullStackArtifact
 from src.engine.source_assets import css_urls, srcset_entries
+from src.engine.source_zip import website_members, MAX_UPLOAD_BYTES
 
 
 GENERIC_ENTITY_NAMES = {
@@ -754,6 +755,8 @@ def _read_zip_source_bytes(
     cleaned = str(source or "").strip().strip("\"").strip("'")
     local_path = Path(cleaned).expanduser()
     if local_path.exists() and local_path.is_file() and local_path.suffix.lower() == ".zip":
+        if local_path.stat().st_size > MAX_UPLOAD_BYTES:
+            raise ValueError("ZIP exceeds the 100 MB upload limit.")
         return local_path.read_bytes(), str(local_path.resolve()), "local"
 
     normalized_url = _normalize_http_url(cleaned, cleaned)
@@ -882,8 +885,8 @@ def _crawl_zip_source(
     )
 
     with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
-        members = [item for item in archive.infolist() if not item.is_dir()]
-        member_names = [item.filename.replace("\\", "/").lstrip("./") for item in members]
+        members = website_members(archive)
+        member_names = [name for _, name in members]
 
         validation_issues = _validate_static_zip_members(member_names) if enforce_static_source else []
         if validation_issues:
@@ -917,8 +920,8 @@ def _crawl_zip_source(
         page_index = 0
         asset_index = 0
 
-        for item in members:
-            member_name = item.filename.replace("\\", "/").lstrip("./")
+        for item, member_name in members:
+            member_name = quote(member_name, safe="/")
             try:
                 payload = archive.read(item)
             except Exception as exc:
@@ -945,7 +948,7 @@ def _crawl_zip_source(
                     content=payload,
                     content_type=content_type,
                 )
-                html_text = payload.decode("utf-8", errors="replace")
+                html_text = UnicodeDammit(payload, is_html=True).unicode_markup or payload.decode("utf-8", errors="replace")
                 crawled_pages.append(html_text)
                 page_urls.append(f"zip://{member_name}")
                 page_records.append(

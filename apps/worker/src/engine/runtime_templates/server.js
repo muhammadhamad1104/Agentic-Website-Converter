@@ -166,8 +166,21 @@ app.delete('/api/admin/records/:entity/:id', authorize, wrap(async (req, res) =>
 }));
 app.use('/assets/uploads', express.static(resolve(root, 'uploads')));
 app.use('/assets', express.static(resolve(root, '../frontend/public/assets')));
+app.get('/__runtime/navigation.js', (req, res) => res.type('application/javascript').send(`
+document.addEventListener('click', event => {
+  if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
+  if (!link || link.hasAttribute('download') || link.target !== '_parent') return;
+  const url = new URL(link.href, location.href);
+  if (url.origin !== location.origin) return;
+  event.preventDefault();
+  window.parent.postMessage({ type: 'converted-site:navigate', path: url.pathname + url.search + url.hash }, location.origin);
+}, true);
+`));
+app.use(express.static(resolve(root, '../frontend/public')));
 app.get('/__site/*', wrap(async (req, res) => {
-  const route = req.originalUrl.slice('/__site'.length) || '/';
+  let route = req.originalUrl.slice('/__site'.length) || '/';
+  if (seed.sourceType === 'zip') route = route.split('?')[0];
   let page = await db.sitePage.findUnique({ where: { route } });
   if (!page && route === '/') page = await db.sitePage.findUnique({ where: { route: seed.homeRoute } });
   if (!page || !page.published) return res.status(404).type('html').send('<h1>Page not found</h1>');
@@ -187,7 +200,10 @@ app.get('/__site/*', wrap(async (req, res) => {
     }
   }
   $('title').text(page.title);
-  if (process.env.PREVIEW_MODE === '1') $('a[target="_top"]').attr('target', '_parent');
+  if (process.env.PREVIEW_MODE === '1') {
+    $('a[target="_top"]').attr('target', '_parent');
+    $('body').append('<script src="/__runtime/navigation.js"></script>');
+  }
   res.set('Cache-Control', 'no-store').type('html').send($.html());
 }));
 const dist = resolve(root, '../frontend/dist');

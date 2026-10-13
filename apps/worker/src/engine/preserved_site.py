@@ -5,9 +5,10 @@ import hashlib
 import json
 import mimetypes
 from pathlib import Path
-from urllib.parse import urldefrag, urlsplit
+from urllib.parse import urldefrag, urlsplit, unquote
 
 from bs4 import BeautifulSoup, NavigableString, Comment
+import tinycss2
 
 from src.engine.source_assets import asset_path, resolve_url, route_for, rewrite_css, rewrite_srcset
 
@@ -42,6 +43,12 @@ def generate_preserved_site(state):
     routes = {url: route_for(url) for url in pages}
     if len(set(routes.values())) != len(routes):
         raise ValueError("Captured pages contain conflicting local routes")
+    for url in pages:
+        if url.startswith("zip://") and url.lower().endswith(("/index.html", "/index.htm", "zip://index.html", "zip://index.htm")):
+            directory = url.rsplit("/", 1)[0] + "/" if "/" in url[6:] else "zip://"
+            routes[directory] = routes[url]
+            if directory != "zip://":
+                routes[directory.rstrip("/")] = routes[url]
     for record in captured.get("pages", []):
         if record.get("requested_url") and record["url"] in routes:
             routes[record["requested_url"]] = routes[record["url"]]
@@ -56,10 +63,14 @@ def generate_preserved_site(state):
             return value
         absolute, fragment = urldefrag(resolve_url(base, value))
         suffix = "#" + fragment if fragment else ""
+        query = ""
+        if absolute.startswith("zip://") and "?" in absolute:
+            absolute, query = absolute.split("?", 1)
+            query = "?" + query
         if absolute in asset_map:
-            return asset_map[absolute] + suffix
+            return asset_map[absolute] + query + suffix
         if absolute in routes:
-            return routes[absolute] + suffix
+            return routes[absolute] + query + suffix
         parsed = urlsplit(absolute)
         if (not required and parsed.scheme in {"http", "https"} and parsed.port in {None, 80, 443}
                 and (parsed.hostname or "").removeprefix("www.") in site_hosts
@@ -128,18 +139,27 @@ def generate_preserved_site(state):
         if url not in asset_map:
             missing.add(url)
             continue
-        item = {"filename": "public" + asset_map[url], "source": record["storage_path"]}
+        item = {"filename": "public" + (unquote(asset_map[url]) if url.startswith("zip://") else asset_map[url]), "source": record["storage_path"]}
         content_type = str(record.get("content_type") or "").split(";")[0].strip().lower()
         if not content_type or content_type == "application/octet-stream":
             content_type = mimetypes.guess_type(urlsplit(url).path)[0] or mimetypes.guess_type(record["storage_path"])[0] or "application/octet-stream"
         if "css" in content_type or urlsplit(url).path.endswith(".css"):
-            css = Path(record["storage_path"]).read_text(encoding="utf-8", errors="replace")
+            if url.startswith("zip://"):
+                rules, _encoding = tinycss2.parse_stylesheet_bytes(Path(record["storage_path"]).read_bytes())
+                for rule in rules:
+                    if rule.type == "at-rule" and rule.lower_at_keyword == "charset":
+                        rule.prelude = tinycss2.parse_component_value_list(' "UTF-8"')
+                css = tinycss2.serialize(rules)
+            else:
+                css = Path(record["storage_path"]).read_text(encoding="utf-8", errors="replace")
             item["code"] = rewrite_css(css, lambda value: rewrite(url, value, True))
         runtime_assets.append(item)
         media.append({"url": asset_map[url], "type": content_type, "source": url})
     schema = state["schema_proposal"]
     home = next((page["route"] for page in runtime_pages if page["route"] == "/"), runtime_pages[0]["route"])
     seed = {"pages": runtime_pages, "schema": schema, "media": media, "homeRoute": home}
+    if captured.get("source_type") == "zip":
+        seed["sourceType"] = "zip"
     backend_package = {"name": "converted-site-backend", "private": True, "type": "module",
                        "scripts": {"start": "node src/index.js", "dev": "node --watch src/index.js",
                                    "setup": "node scripts/setup.js", "check": "node --check src/index.js"},

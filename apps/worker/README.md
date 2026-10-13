@@ -81,6 +81,17 @@ unchanged. Captured pages now retain their original markup, CSS, scripts,
 fonts and media; a React public renderer displays the database-backed
 documents instead of asking the LLM to redraw the design.
 
+The wizard accepts either a URL or an uploaded static website ZIP. ZIP sources
+are validated before project creation and kept in the worker's persistent
+`data/source-uploads` directory with account ownership. The original archive
+can be reused for a retry and is removed when its project is deleted. Uploads
+are limited to 100 MB compressed, 512 MB expanded and 20,000 archive entries.
+Corrupt archives, encrypted files, symbolic links, unsafe/duplicate paths and
+server-side file types are rejected. Wrapper folders are removed from the
+website root; HTML pages and media are captured together, while original
+asset paths preserve CSS imports, JavaScript modules and local references.
+Private `.env` files and tooling directories are excluded from capture.
+
 - Full-site mode has no page, asset or depth cap. Smaller page presets are
   explicit. Reaching a configured capture limit marks the capture incomplete.
 - Every captured page is included in batched schema inference. The

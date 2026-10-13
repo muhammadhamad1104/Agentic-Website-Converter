@@ -75,7 +75,7 @@ def test_admin_edits_uploads_records_and_deletions_survive_restart(tmp_path, mon
     project = Path(validation["project_dir"])
     env = {**os.environ, "DATABASE_URL": "file:./verification.db",
            "ADMIN_EMAIL": "test@example.com", "ADMIN_PASSWORD": "Test-only-password-294"}
-    with running_site(project, env) as base:
+    with running_site(project, {**env, 'PREVIEW_MODE': '1'}) as base:
         assert requests.get(base + "/api/admin/pages").status_code == 401
         login = requests.post(base + "/api/admin/login", json={"email": env["ADMIN_EMAIL"], "password": env["ADMIN_PASSWORD"]})
         assert login.ok, login.text
@@ -87,6 +87,20 @@ def test_admin_edits_uploads_records_and_deletions_survive_restart(tmp_path, mon
             browser = playwright.chromium.launch()
             try:
                 tab = browser.new_page(viewport={"width": 1440, "height": 900})
+                tab.goto(base + '/')
+                tab.evaluate("""base => {
+                    const frame = document.createElement('iframe');
+                    frame.title = 'Sandbox preview';
+                    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups');
+                    frame.style.cssText = 'width:100%;height:850px;border:0';
+                    frame.src = base + '/';
+                    document.body.replaceChildren(frame);
+                }""", base)
+                source = tab.frame_locator('iframe[title="Sandbox preview"]').frame_locator('iframe')
+                source.get_by_role('heading', name='Original heading', exact=True).wait_for()
+                source.get_by_role('link', name='Contact', exact=True).click()
+                source.get_by_role('heading', name='Contact', exact=True).wait_for()
+                assert tab.url == base + '/'
                 tab.goto(base + "/admin")
                 tab.get_by_label("Email").fill(env["ADMIN_EMAIL"])
                 tab.get_by_label("Password", exact=True).fill(env["ADMIN_PASSWORD"])

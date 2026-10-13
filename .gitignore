@@ -34,6 +34,7 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 /apps/worker/data/crawl-cache/
+/apps/worker/data/source-uploads/
 
 # Prisma
 apps/backend/prisma/migrations/*

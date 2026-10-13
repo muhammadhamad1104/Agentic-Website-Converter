@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit, urldefrag
+from urllib.parse import urljoin, urlsplit, urldefrag, quote, unquote
 
 import tinycss2
 
@@ -13,12 +13,15 @@ def resolve_url(base: str, value: str) -> str:
         base = "https://zip.invalid/" + base[6:]
         resolved = urljoin(base, value)
         if resolved.startswith("https://zip.invalid/"):
-            return "zip://" + resolved[len("https://zip.invalid/"):]
+            parsed = urlsplit(resolved)
+            return "zip://" + quote(unquote(parsed.path.lstrip("/")), safe="/") + ("?" + parsed.query if parsed.query else "") + ("#" + parsed.fragment if parsed.fragment else "")
         return resolved
     return urljoin(base, value)
 
 
 def asset_path(url: str) -> str:
+    if url.startswith("zip://"):
+        return "/" + url[6:].split("?", 1)[0].split("#", 1)[0]
     parsed = urlsplit(url)
     suffix = Path(parsed.path).suffix
     if not suffix or len(suffix) > 12:
@@ -31,6 +34,8 @@ def route_for(url: str) -> str:
         return "/" if url == "inline://page-1" else "/" + url[len("inline://"):]
     parsed = urlsplit(url)
     path = "/" + url[6:].split("?", 1)[0] if url.startswith("zip://") else parsed.path or "/"
+    if url.startswith("zip://") and path.lower().endswith(("/index.html", "/index.htm")):
+        path = path.rsplit("/", 1)[0] + "/"
     return path + ("?" + parsed.query if parsed.query else "")
 
 

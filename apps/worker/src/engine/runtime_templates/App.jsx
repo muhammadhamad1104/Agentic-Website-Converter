@@ -5,7 +5,11 @@ import './style.css';
 
 const sections = [['overview', 'Overview', LayoutDashboard], ['pages', 'Pages', FileText], ['media', 'Media library', Image], ['collections', 'Collections', Database]];
 const fileName = item => {
-  try { return decodeURIComponent(new URL(item.source || item.url, location.origin).pathname.split('/').pop()) || 'Asset'; }
+  try {
+    const source = item.source || item.url;
+    const path = source.startsWith('zip://') ? source.slice(6).split(/[?#]/)[0] : new URL(source, location.origin).pathname;
+    return decodeURIComponent(path.split('/').pop()) || 'Asset';
+  }
   catch { return item.url; }
 };
 const formatDate = value => value && !Number.isNaN(Date.parse(value)) ? new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(value)) : '';
@@ -275,6 +279,20 @@ function App() {
   </div>;
 }
 
+function PublicSite() {
+  const source = useRef(null);
+  useEffect(() => {
+    const navigate = event => {
+      if (event.source !== source.current?.contentWindow || event.origin !== location.origin ||
+          event.data?.type !== 'converted-site:navigate' || typeof event.data.path !== 'string') return;
+      if (!event.data.path.startsWith('/') || event.data.path.startsWith('//')) return;
+      const url = new URL(event.data.path, location.origin);
+      if (url.origin === location.origin && !url.pathname.startsWith('/__')) location.assign(url.href);
+    };
+    window.addEventListener('message', navigate);
+    return () => window.removeEventListener('message', navigate);
+  }, []);
+  return <iframe ref={source} title="Website" className="source-site" src={'/__site' + location.pathname + location.search + location.hash} />;
+}
 const admin = location.pathname === '/admin' || location.pathname.startsWith('/admin/');
-createRoot(document.getElementById('root')).render(admin ? <App /> :
-  <iframe title="Website" className="source-site" src={'/__site' + location.pathname + location.search + location.hash} />);
+createRoot(document.getElementById('root')).render(admin ? <App /> : <PublicSite />);

@@ -9,6 +9,7 @@ from typing import Any
 from src.engine.service import ConversionEngine
 from src.engine.preview import PreviewManager
 from src.config.settings import settings
+from src.api.source_uploads import router as source_router, authorize as authorize_source, uploaded_source
 import secrets
 from uuid import UUID
 import requests
@@ -22,6 +23,7 @@ app = FastAPI(
 # Global ConversionEngine instance
 engine = ConversionEngine()
 previews = PreviewManager()
+app.include_router(source_router)
 
 
 @app.on_event("shutdown")
@@ -86,6 +88,7 @@ async def health():
 class JobRequest(BaseModel):
     url: str | None = None
     file_path: str | None = None
+    source_upload_id: UUID | None = None
     crawl_depth: int = Field(default=3, ge=0)
     full_site: bool = True
     max_pages: int = Field(default=0, ge=0)
@@ -111,10 +114,15 @@ async def execute_real_conversion_job(job_id: str):
         print(f"[Worker Engine] Job {job_id} failed with error: {e}")
 
 @app.post("/api/jobs")
-async def create_job(request: JobRequest, background_tasks: BackgroundTasks):
+async def create_job(request: JobRequest, background_tasks: BackgroundTasks,
+                     x_preview_secret: str = Header(default=""), x_source_owner: str = Header(default="")):
     target_url = request.url or request.file_path
-    if request.url and request.file_path:
+    if sum(bool(value) for value in (request.url, request.file_path, request.source_upload_id)) > 1:
         raise HTTPException(status_code=400, detail="Provide exactly one input source")
+    if request.source_upload_id:
+        authorize_source(x_preview_secret)
+        archive, _info = uploaded_source(request.source_upload_id, x_source_owner)
+        target_url = str(archive)
     if not target_url:
         raise HTTPException(status_code=400, detail="Must provide either URL or file_path")
         
@@ -124,7 +132,7 @@ async def create_job(request: JobRequest, background_tasks: BackgroundTasks):
         "max_pages": request.max_pages,
         "max_assets": request.max_assets,
         "render_js": True,
-        "enforce_static_source": False
+        "enforce_static_source": bool(request.source_upload_id)
     }
 
     job_data = engine.create_job(
