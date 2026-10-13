@@ -45,6 +45,7 @@ The brain of the platform. This service processes the actual website conversion 
 ## 🚀 Features
 
 - **3D Interactive Wizard:** A step-by-step conversion wizard featuring stunning 3D graphics and smooth animations.
+- **URL or ZIP Sources:** Convert a live static website URL or upload a static website ZIP in the same wizard, with full archive capture, generated admin, preview and source download.
 - **User Authentication:** Secure registration and login flows with JWT and password hashing.
 - **Asynchronous Processing:** BullMQ safely handles long-running AI conversion tasks without blocking the backend.
 - **Comprehensive Testing:** End-to-end testing coverage across the frontend components, backend APIs, and Python worker endpoints.

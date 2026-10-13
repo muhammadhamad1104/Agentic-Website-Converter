@@ -16,6 +16,7 @@ interface SiteState {
   fetchSites: (page?: number, limit?: number) => Promise<void>;
   fetchSite: (id: string) => Promise<void>;
   createSite: (payload: CreateSitePayload) => Promise<Site>;
+  uploadZip: (file: File, progress?: (percent: number) => void) => Promise<Site>;
   deleteSite: (id: string) => Promise<void>;
   fetchStats: () => Promise<void>;
   fetchAnalytics: () => Promise<void>;
@@ -67,6 +68,20 @@ export const useSiteStore = create<SiteState>()(
           set({ isLoading: false });
           throw err;
         }
+      },
+
+      uploadZip: async (file, progress) => {
+        set({ isLoading: true });
+        const form = new FormData();
+        form.append('file', file);
+        try {
+          const { data } = await api.post('/sites/upload-zip', form, {
+            headers: { 'Content-Type': undefined }, timeout: 180000,
+            onUploadProgress: event => progress?.(Math.round((event.loaded / (event.total || file.size || 1)) * 100)),
+          });
+          set(state => ({ sites: [data.site, ...state.sites], isLoading: false }));
+          return data.site;
+        } catch (error) { set({ isLoading: false }); throw error; }
       },
 
       deleteSite: async (id) => {

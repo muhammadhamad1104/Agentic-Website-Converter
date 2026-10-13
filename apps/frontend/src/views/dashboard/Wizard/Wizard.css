@@ -39,6 +39,25 @@
 .source-form-meta { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 18px; font-size: 8px; color: #74846e; }
 .conversion-studio .url-status { font-size: 11px; margin-top: 22px; gap: 9px; min-height: 23px; }
 .source-status { min-height: 58px; }
+.source-mode { display: inline-flex; width: fit-content; gap: 4px; border: 1px solid var(--workspace-line); border-radius: 4px; padding: 4px; margin: 0 0 24px; }
+.source-mode label { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 8px 14px; font-size: 11px; cursor: pointer; position: relative; color: #657568; }
+.source-mode input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.source-mode label:has(input:focus-visible) { outline: 2px solid #78946c; outline-offset: 2px; }
+.source-mode .selected { background: #e4ecdf; color: #36583c; border-radius: 2px; }
+.zip-source { min-height: 200px; padding: 22px; border: 1px dashed #aebfa7; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 14px; color: #5f7859; }
+.zip-source.dragging { background: #e5eddf; border-color: #4c7049; }
+.zip-source > span { font-size: 13px; }
+.zip-source > small { font-size: 10px; color: #73836d; text-align: center; }
+.zip-selection { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; }
+.zip-selection > svg { flex-shrink: 0; }
+.zip-selection > div { flex: 1; min-width: 0; }
+.zip-selection strong { display: block; font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.zip-selection span { display: block; font-size: 10px; color: #73836d; margin-top: 5px; }
+.zip-upload-progress { width: 100%; font-size: 11px; text-align: center; }
+.zip-upload-progress progress { display: block; width: 100%; height: 4px; margin-top: 12px; accent-color: #527247; }
+.archive-scope { display: flex; align-items: center; gap: 14px; padding: 24px 0; }
+.archive-scope strong { display: block; font-size: 14px; font-weight: 500; color: #476044; }
+.archive-scope span { display: block; font-size: 11px; color: #71836a; margin-top: 8px; overflow-wrap: anywhere; }
 .conversion-visual { background: #14231b; color: #b7c7a8; position: relative; overflow: hidden; min-height: 320px; }
 .conversion-visual-label { position: absolute; left: 22px; top: 22px; z-index: 1; font-size: 8px; }
 .conversion-visual-caption { position: absolute; left: 22px; bottom: 22px; z-index: 1; font-family: var(--workspace-serif); font-style: italic; font-size: 17px; }

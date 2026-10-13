@@ -8,7 +8,7 @@ import { usePreview } from '../../../hooks/usePreview';
 import { Workspace, Metrics, Status, LoadError } from '../../components/Workspace/Workspace';
 import PreviewBrowser from './PreviewBrowser';
 
-type Project = { site: { id: string; name: string; sourceUrl: string; status: string; createdAt: string;
+type Project = { site: { id: string; name: string; sourceUrl: string; sourceType?: string; status: string; createdAt: string;
   crawls: { id: string }[]; hasArtifacts: boolean; workerAvailable: boolean;
   entities: { name: string; fields: { name: string; type: string }[] }[];
   traceEvents: { node?: string; node_name?: string; status?: string; output_status?: string; duration_ms?: number; timestamp?: string; timestamp_ms?: number }[];
@@ -55,7 +55,7 @@ export default function SitePortal() {
     {site && stats && <>
       <header className="workspace-title" style={{ marginTop: 28 }}>
         <div><p className="eyebrow">PROJECT / {new Date(site.createdAt).toLocaleDateString()}</p><h1>{site.name}</h1>
-          <a href={site.sourceUrl} target="_blank" rel="noreferrer" className="source-link">{site.sourceUrl} <ExternalLink size={12} /></a></div>
+          {site.sourceType === 'ZIP' ? <span className="source-link">{site.sourceUrl}</span> : <a href={site.sourceUrl} target="_blank" rel="noreferrer" className="source-link">{site.sourceUrl} <ExternalLink size={12} /></a>}</div>
         <div className="workspace-actions"><Status value={site.status} />
           <button className="btn btn-primary" disabled={!jobId || downloading} onClick={download}>
             {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}{downloading ? 'Packaging...' : 'Download'}</button>

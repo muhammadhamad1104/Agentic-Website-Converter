@@ -6,8 +6,8 @@ import { useResource } from '../../../../hooks/useResource';
 import Step1Input from './Step1Input';
 import Step2Config from './Step2Config';
 
-const { createSite } = vi.hoisted(() => ({ createSite: vi.fn() }));
-vi.mock('../../../../store/siteStore', () => ({ useSiteStore: () => ({ createSite }) }));
+const { createSite, uploadZip } = vi.hoisted(() => ({ createSite: vi.fn(), uploadZip: vi.fn() }));
+vi.mock('../../../../store/siteStore', () => ({ useSiteStore: () => ({ createSite, uploadZip }) }));
 vi.mock('../../../../services/api', () => ({ default: { post: vi.fn() } }));
 vi.mock('../../../../hooks/useResource', () => ({ useResource: vi.fn() }));
 vi.mock('./ConversionVisual', () => ({ default: () => <div data-testid="conversion-visual" /> }));
@@ -21,6 +21,35 @@ beforeEach(() => {
   vi.mocked(useResource).mockReturnValue({ data: account, error: '', loading: false, refresh: vi.fn() } as any);
 });
 describe('Converter source and capture settings', () => {
+  it('uploads the selected ZIP and advances only after server validation', async () => {
+    const next = vi.fn(); showInput(next);
+    uploadZip.mockResolvedValue({ id: 'zip-site', sourceUrl: 'website.zip' });
+    fireEvent.click(screen.getByRole('radio', { name: 'ZIP archive' }));
+    expect(screen.queryByLabelText('Static website URL')).not.toBeInTheDocument();
+    const file = new File(['zip'], 'website.zip', { type: 'application/zip' });
+    fireEvent.change(screen.getByLabelText('Static website ZIP'), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to settings' }));
+    await waitFor(() => expect(next).toHaveBeenCalledOnce());
+    expect(uploadZip).toHaveBeenCalledWith(file, expect.any(Function));
+    expect(createSite).not.toHaveBeenCalled();
+  });
+  it('keeps a rejected archive visible without advancing', async () => {
+    const next = vi.fn(); showInput(next);
+    uploadZip.mockRejectedValue({ response: { data: { error: 'ZIP contains server-side files' } } });
+    fireEvent.click(screen.getByRole('radio', { name: 'ZIP archive' }));
+    fireEvent.change(screen.getByLabelText('Static website ZIP'), { target: { files: [new File(['zip'], 'bad.zip')] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to settings' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('server-side files');
+    expect(next).not.toHaveBeenCalled();
+  });
+  it('captures a complete archive without sending a filename as a URL', async () => {
+    render(<MemoryRouter><Step2Config onNext={vi.fn()} onBack={vi.fn()} setJobId={vi.fn()} targetUrl="website.zip" siteId="zip-site" sourceType="ZIP" /></MemoryRouter>);
+    expect(screen.queryByRole('radio', { name: 'Quick scan' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Start conversion' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/jobs', {
+      siteId: 'zip-site', crawlDepth: 3, fullSite: true, maxPages: 0, maxAssets: 0, extractImages: true, inferRelations: true,
+    }));
+  });
   it('keeps classification authoritative before project creation', async () => {
     const next = vi.fn(); showInput(next);
     fireEvent.change(screen.getByLabelText('Static website URL'), { target: { value: 'www.nowwadvisory.co.nz' } });

@@ -25,6 +25,7 @@ export default function Wizard() {
   const [currentStep, setCurrentStep] = useState(1);
   const [jobId, setJobId] = useState<string | null>(null);
   const [targetUrl, setTargetUrl] = useState('');
+  const [sourceType, setSourceType] = useState<'URL' | 'ZIP'>('URL');
   const [siteId, setSiteId] = useState<string | null>(null);
   const stage = useRef<HTMLDivElement>(null);
   const rail = useRef<HTMLOListElement>(null);
@@ -42,8 +43,8 @@ export default function Wizard() {
   const back = () => setCurrentStep(step => Math.max(1, step - 1));
   const content = () => {
     switch (currentStep) {
-      case 1: return <Step1Input onNext={next} setJobId={setJobId} setTargetUrl={setTargetUrl} setSiteId={setSiteId} />;
-      case 2: return <Step2Config onNext={next} onBack={back} setJobId={setJobId} targetUrl={targetUrl} siteId={siteId} />;
+      case 1: return <Step1Input onNext={next} setJobId={setJobId} setTargetUrl={setTargetUrl} setSiteId={setSiteId} setSourceType={setSourceType} />;
+      case 2: return <Step2Config onNext={next} onBack={back} setJobId={setJobId} targetUrl={targetUrl} siteId={siteId} sourceType={sourceType} />;
       case 3: return <Step3Crawl onNext={next} jobId={jobId} />;
       case 4: return <Step4Schema onNext={next} jobId={jobId} />;
       case 5: return <Step5Approve onNext={next} onBack={back} jobId={jobId} />;
@@ -58,7 +59,7 @@ export default function Wizard() {
     </div>
     <header className="workspace-title conversion-title">
       <div><h1>{activeStep.heading} <em>{activeStep.accent}</em></h1>
-        {targetUrl && <a className="conversion-source-url" title={targetUrl} href={targetUrl} target="_blank" rel="noreferrer">{targetUrl}</a>}</div>
+        {targetUrl && (sourceType === 'ZIP' ? <span className="conversion-source-url" title={targetUrl}>{targetUrl}</span> : <a className="conversion-source-url" title={targetUrl} href={targetUrl} target="_blank" rel="noreferrer">{targetUrl}</a>)}</div>
     </header>
     <nav className="conversion-rail" aria-label="Conversion stages"><ol ref={rail}>
       {steps.map((step, index) => {
