@@ -3,6 +3,7 @@ import axios from 'axios';
 import { bullmqConnection } from '../config/redis';
 import logger from '../utils/logger';
 import { PrismaClient } from '@prisma/client';
+import { sourceHeaders } from '../services/sourceUploads';
 
 const prisma = new PrismaClient();
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -12,7 +13,7 @@ export const conversionQueue = new Queue('conversion-jobs', {
 });
 
 const worker = new Worker('conversion-jobs', async (job: Job) => {
-  const { siteId, url, extractImages, crawlDepth, fullSite, maxPages, maxAssets } = job.data;
+  const { siteId, url, sourceUploadId, sourceOwnerId, extractImages, crawlDepth, fullSite, maxPages, maxAssets } = job.data;
   const crawlId = job.data.jobId || job.id;
   
   logger.info(`Processing job ${job.id} for site ${siteId} with crawl depth ${crawlDepth || 2}`);
@@ -31,13 +32,13 @@ const worker = new Worker('conversion-jobs', async (job: Job) => {
     // 2. Call FastAPI Worker
     const workerUrl = process.env.WORKER_API_URL || 'http://localhost:8000';
     const response = await axios.post(`${workerUrl}/api/jobs`, {
-      url: url,
+      ...(sourceUploadId ? { source_upload_id: sourceUploadId } : { url }),
       crawl_depth: crawlDepth ?? 3,
       full_site: fullSite ?? true,
       max_pages: maxPages ?? 0,
       max_assets: maxAssets ?? 0,
       extract_images: extractImages ?? true
-    }, { timeout: 15000 });
+    }, { timeout: 15000, ...(sourceUploadId ? { headers: sourceHeaders(sourceOwnerId) } : {}) });
     
     const workerJobId = response.data.job_id;
     

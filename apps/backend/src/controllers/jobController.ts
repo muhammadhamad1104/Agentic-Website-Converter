@@ -5,6 +5,7 @@ import { conversionQueue } from '../queue/jobQueue';
 import { randomUUID } from 'node:crypto';
 import { entitlement } from '../services/plans';
 import { processingDuration } from '../services/conversionMetrics';
+import { zipSource } from '../services/sourceUploads';
 
 const prisma = new PrismaClient();
 const WORKER_URL = process.env.WORKER_URL || process.env.WORKER_API_URL || 'http://localhost:8000';
@@ -17,8 +18,7 @@ export const createJob = async (req: Request, res: Response, next: NextFunction)
         return res.status(400).json({ error: 'Crawl limits must be non-negative integers' });
     }
     let actualUrl = typeof url === 'string' ? url.trim() : '';
-    if (!actualUrl) return res.status(400).json({ error: 'URL is required' });
-    if (!/^https?:\/\//i.test(actualUrl)) actualUrl = 'https://' + actualUrl;
+    if (!actualUrl && !siteId) return res.status(400).json({ error: 'URL or uploaded ZIP project is required' });
     const user = (req as any).account;
     const result = await prisma.$transaction(async tx => {
       // Serialize quota reservation per account, including concurrent browser tabs.
@@ -29,6 +29,12 @@ export const createJob = async (req: Request, res: Response, next: NextFunction)
       if (siteId && !site) throw Object.assign(new Error('Site not found'), { statusCode: 404 });
       if (site && site.ownerId !== user.id && user.role !== 'ADMIN')
         throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+      const source = zipSource(site);
+      if (source) actualUrl = site.sourceUrl;
+      else {
+        if (!actualUrl) throw Object.assign(new Error('URL is required'), { statusCode: 400 });
+        if (!/^https?:\/\//i.test(actualUrl)) actualUrl = 'https://' + actualUrl;
+      }
       if (!site) {
         const host = new URL(actualUrl).hostname;
         site = await tx.site.create({ data: { name: host, slug: host.replace(/[^a-z0-9]+/gi, '-') + '-' + randomUUID(),
@@ -39,10 +45,11 @@ export const createJob = async (req: Request, res: Response, next: NextFunction)
       const crawl = await tx.crawl.create({ data: { siteId: site.id, status: 'PENDING', startUrl: actualUrl } });
       await tx.auditLog.create({ data: { actorUserId: user.id, action: 'conversion.started',
         targetType: 'crawl', targetId: crawl.id, ipHash: 'not-recorded' } });
-      return { crawl, siteId: site.id };
+      return { crawl, siteId: site.id, sourceUploadId: source?.id, sourceOwnerId: source ? site.ownerId : undefined };
     });
     try {
       await conversionQueue.add('convert-site', { jobId: result.crawl.id, siteId: result.siteId, url: actualUrl,
+        ...(result.sourceUploadId ? { sourceUploadId: result.sourceUploadId, sourceOwnerId: result.sourceOwnerId } : {}),
         crawlDepth: crawlDepth ?? 3, fullSite: fullSite ?? true, maxPages: maxPages ?? 0, maxAssets: maxAssets ?? 0,
         extractImages: extractImages ?? true, inferRelations: inferRelations ?? true }, { jobId: result.crawl.id });
     } catch (error) {
@@ -168,10 +175,13 @@ export const runJob = async (req: Request, res: Response, next: NextFunction) =>
     const crawl = await prisma.crawl.findUnique({ where: { id } });
     if (!crawl) return res.status(404).json({ error: 'Job not found' });
 
+    const site = await prisma.site.findUnique({ where: { id: crawl.siteId } });
+    const source = zipSource(site);
     await conversionQueue.add('convert-site', {
       jobId: crawl.id,
       siteId: crawl.siteId,
       url: crawl.startUrl,
+      ...(source ? { sourceUploadId: source.id, sourceOwnerId: site.ownerId } : {}),
       extractImages: true
     }, {
       jobId: `${crawl.id}-${Date.now()}`

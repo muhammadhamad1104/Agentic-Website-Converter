@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import axios from 'axios';
 import { workerMetrics, processingDuration } from '../services/conversionMetrics';
+import { removeZipSource } from '../services/sourceUploads';
 
 const prisma = new PrismaClient();
 const WORKER_URL = process.env.WORKER_URL || process.env.WORKER_API_URL || 'http://localhost:8000';
@@ -148,6 +149,7 @@ export const createSite = async (req: Request, res: Response, next: NextFunction
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const { url, sourceUrl, name, sourceType } = req.body;
+    if (sourceType === 'ZIP') return res.status(400).json({ error: 'Use the ZIP upload to create an archive project' });
     let actualUrl = (url || sourceUrl || '').trim();
     if (!actualUrl) return res.status(400).json({ error: 'URL is required' });
 
@@ -211,6 +213,7 @@ export const deleteSite = async (req: Request, res: Response, next: NextFunction
       }
       await tx.site.delete({ where: { id } });
     });
+    await removeZipSource(site).catch(() => undefined);
     res.json({ message: 'Site deleted' });
   } catch (error) {
     next(error);

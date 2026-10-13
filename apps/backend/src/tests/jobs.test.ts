@@ -85,6 +85,19 @@ describe('Plan policy and durable usage', () => {
   });
 });
 describe('Account and project access', () => {
+  test('queues a ZIP from the authorized site metadata without treating its filename as a URL', async () => {
+    db.site.findUnique.mockResolvedValue({ id: 'site-1', ownerId: 'owner-1', sourceType: 'ZIP', sourceUrl: 'website.zip',
+      settings: { sourceUpload: { id: 'uploaded-source', filename: 'website.zip' } } });
+    expect((await request(app).post('/jobs').set(auth).send({ siteId: 'site-1' })).status).toBe(201);
+    expect(conversionQueue.add).toHaveBeenCalledWith('convert-site', expect.objectContaining({
+      sourceUploadId: 'uploaded-source', sourceOwnerId: 'owner-1', url: 'website.zip',
+    }), { jobId: 'job-1' });
+  });
+  test('does not accept a client-supplied ZIP upload from another account', async () => {
+    db.site.findUnique.mockResolvedValue({ id: 'site-1', ownerId: 'other', sourceType: 'ZIP' });
+    expect((await request(app).post('/jobs').set(auth).send({ siteId: 'site-1', sourceUploadId: 'stolen-upload' })).status).toBe(403);
+    expect(conversionQueue.add).not.toHaveBeenCalled();
+  });
   test('rejects unauthenticated jobs', async () => expect((await request(app).post('/jobs').send({ url: 'https://example.com' })).status).toBe(401));
   test('rejects missing URLs', async () => expect((await request(app).post('/jobs').set(auth).send({})).status).toBe(400));
   test.each(['get', 'post', 'put', 'delete'])('rejects cross-account %s access', async method => {
