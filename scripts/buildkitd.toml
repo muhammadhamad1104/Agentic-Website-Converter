@@ -1,0 +1,5 @@
+[dns]
+  nameservers = ["1.1.1.1", "8.8.8.8"]
+
+[worker.oci]
+  max-parallelism = 2
