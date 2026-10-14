@@ -1,0 +1,22 @@
+{
+	email {$TLS_CONTACT_EMAIL}
+}
+
+{$PUBLIC_APP_HOST} {
+	encode zstd gzip
+	header Referrer-Policy strict-origin-when-cross-origin
+	header X-Content-Type-Options nosniff
+
+	handle /api/* {
+		reverse_proxy backend:5000
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
+}
+
+preview.{$PUBLIC_APP_HOST} {
+	header Referrer-Policy no-referrer
+	reverse_proxy backend:5001
+}

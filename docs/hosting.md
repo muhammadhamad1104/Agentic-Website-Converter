@@ -126,3 +126,52 @@ Before going public:
 Credits and domain offers are temporary benefits, not a promise of unlimited free
 hosting or LLM usage. See [SECURITY.md](../SECURITY.md) and the
 [handover guide](handover.md) for remaining deployment safeguards.
+
+## Prepared HTTPS Server Setup
+
+`docker-compose.public.yml` is a server-only override preserving the existing
+frontend/API/worker/database architecture. It exposes only Caddy on ports 80/443,
+routes `/api/*` to the API, keeps database/Redis/worker ports unpublished, and uses
+`preview.<PUBLIC_APP_HOST>` for the separate generated-app origin. Production CORS
+allows the configured frontend rather than reflecting arbitrary browser origins.
+This setup is prepared code, not evidence of a completed cloud deployment or a
+production security certification.
+
+On a separately provisioned x86-64 server, configure its own private root `.env`:
+
+- `PUBLIC_APP_HOST=converter.muhammadhamad.me`, or another owned converter subdomain.
+- `TLS_CONTACT_EMAIL` for certificate notices.
+- Unique random `DB_PASSWORD` (24+ characters), `JWT_SECRET`, and `PREVIEW_API_SECRET`
+  (32+ characters). Do not reuse the local PostgreSQL password or copy real user data.
+- Required LLM/Stripe/SMTP settings and separately verified provider spending limits.
+- A public signed Stripe webhook at `https://<PUBLIC_APP_HOST>/api/payments/webhook`;
+  the local Stripe listener is not a public-deployment dependency.
+
+Create DNS A records for the converter hostname and `preview.<PUBLIC_APP_HOST>`
+pointing to the VM. Preserve the existing portfolio's root/www records. Check any
+AAAA records against the server's actual IPv6 support. Certificate issuance needs
+working DNS and inbound HTTP/HTTPS access.
+
+After account credit, spending protection, VM costs, DNS, resource limits, isolation,
+and backups are verified, run on **the cloud server**, not the demonstration laptop:
+
+```bash
+node scripts/check-public-env.mjs
+docker compose -f docker-compose.yml -f docker-compose.public.yml build backend frontend worker
+docker compose -f docker-compose.yml -f docker-compose.public.yml up -d --wait db redis
+docker compose -f docker-compose.yml -f docker-compose.public.yml run --rm --no-deps --pull never backend npm run migrate
+docker compose -f docker-compose.yml -f docker-compose.public.yml up -d --no-build --wait
+```
+
+The public frontend is rebuilt for the chosen HTTPS origin; registry images built
+for localhost must not be reused as the public frontend without that rebuild.
+Run the separate admin seed only with intentional private provisioning credentials.
+Certificate data persists in private Docker volumes. Use the same two Compose files
+for subsequent operations. An Azure spending limit is distinct from a budget alert;
+do not remove the limit or upgrade to pay-as-you-go under a zero-fee requirement.
+
+For independent hosting, free-plan capacity and filesystem persistence must cover
+the complete converter, not just its attractive frontend. Render's free disks are
+ephemeral and Railway's free quota is limited; neither is assumed to satisfy the
+full worker's capture/build/storage needs. No local tunnel is used when independent
+availability is required.

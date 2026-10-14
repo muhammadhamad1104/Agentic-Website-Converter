@@ -1,0 +1,57 @@
+# Server-only override. DNS, subscription credit/spending protection, and secrets
+# must be verified before starting this on an internet-accessible machine.
+services:
+  db:
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set a unique cloud database password}
+
+  redis:
+    ports: !reset []
+
+  worker:
+    ports: !reset []
+    volumes: !override
+      - ./apps/worker/data:/app/data
+      - ./apps/worker/generated:/app/generated
+      - ./apps/worker/data/crawl-cache:/tmp/py_agent_crawl_cache
+
+  backend:
+    ports: !reset []
+    environment:
+      NODE_ENV: production
+      FRONTEND_URL: https://${PUBLIC_APP_HOST:?Set the converter subdomain}
+      CORS_ORIGIN: https://${PUBLIC_APP_HOST:?Set the converter subdomain}
+      PREVIEW_PUBLIC_URL: https://preview.${PUBLIC_APP_HOST:?Set the converter subdomain}
+      TRUST_PROXY: '1'
+      SMTP_ALLOW_INSECURE_LOCAL: 'false'
+
+  frontend:
+    ports: !reset []
+    build:
+      args:
+        VITE_API_URL: https://${PUBLIC_APP_HOST:?Set the converter subdomain}
+
+  gateway:
+    image: caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      PUBLIC_APP_HOST: ${PUBLIC_APP_HOST:?Set the converter subdomain}
+      TLS_CONTACT_EMAIL: ${TLS_CONTACT_EMAIL:?Set an email for certificate notices}
+    volumes:
+      - ./infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:
