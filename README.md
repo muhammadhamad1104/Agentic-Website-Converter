@@ -124,6 +124,23 @@ This is the **platform admin**, separate from each converted application's `/adm
 
 ### Updating And Restarting
 
+Published images and student-domain/hosting options are documented in the
+[containers and hosting guide](docs/hosting.md).
+
+On an already configured machine, open Docker Desktop, select **Containers**, and
+press **Start** on the complete **agentic-converter** group. Open
+[localhost:5173](http://localhost:5173) once the services are healthy. No terminal
+commands, database setup, or payment/email helper are needed for ordinary restarts.
+Start the whole group, not only the frontend; the existing Stripe listener is needed
+for local test-payment webhooks. The app still needs internet for LLM calls and SMTP.
+
+Containers use `unless-stopped`: running containers return when Docker starts, but
+containers you explicitly stop stay stopped until you press Start again. You can
+enable **Settings > General > Start Docker Desktop when you sign in** separately.
+Do not delete the containers or data volumes if you want to retain this one-click setup.
+Starting existing containers does not pick up code or `.env` edits; use the update
+commands below after making changes. Health checks show readiness, not conversion quality.
+
 ```bash
 docker compose up -d --build backend frontend worker
 docker compose ps
