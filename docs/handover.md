@@ -6,6 +6,12 @@
 
 **Supported evaluation environment:** Local Docker Compose
 
+**Online student demonstration:** https://agenticconverter.tech, hosted independently
+on Azure. See [hosting notes](hosting.md#current-student-deployment) for costs,
+private cloud administrator credentials, operational commands, and checked scope.
+The online database starts fresh; local conversion history is not copied. Payments
+remain in test mode and recovery messages are captured in Mailtrap.
+
 ## Materials
 
 Provide the repository, README, MIT license, this guide, and a static website ZIP

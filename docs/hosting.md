@@ -1,5 +1,62 @@
 # Containers, Domains, And Hosting
 
+## Current Student Deployment
+
+Deployed and checked on **October 14, 2026**:
+
+| Item | Configuration |
+| --- | --- |
+| Application | https://agenticconverter.tech |
+| Generated preview origin | https://preview.agenticconverter.tech; access through an authorized project preview |
+| DNS | `@`, `www`, and `preview` A records point to `20.192.29.229`; `www` redirects to the application |
+| Azure resource group / VM | `agentic-converter-demo` / `agentic-converter` |
+| Region / size | Central India / `Standard_B2als_v2`, 2 vCPU, 4 GiB RAM |
+| Storage | 64 GiB Standard SSD, persistent database and worker files, 4 GiB swap |
+| Services | PostgreSQL, Redis, backend, worker, frontend, and Caddy; no Kubernetes or managed database |
+| Network | Only HTTP/HTTPS public; SSH restricted to the owner's provisioning IP |
+| Authentication | Separate cloud administrator, database, JWT, and preview secrets |
+| Payments / email | Public signed Stripe test webhook; Mailtrap sandbox SMTP, not real inbox delivery |
+
+HTTPS certificates are issued automatically by Caddy without a certificate fee.
+The laptop can be turned off; the VM and containers remain online. Docker starts
+at server boot and the containers use `restart: unless-stopped`.
+
+Estimated hosting is **$28-30 USD/month from student credit**, including the VM,
+disk, and public IPv4, before variable storage operations and egress. The initial
+$100 credit therefore covers roughly three months, **not a guaranteed year**.
+Azure for Students spending protection was verified **On**. Do not remove it or
+upgrade to pay-as-you-go. Stopping a VM is not the same as deallocating it; disk
+and public-IP costs can continue even when compute is deallocated. LLM-provider
+usage is separate from Azure credit. The domain's renewal is separate from hosting.
+
+The local private root `.env` contains `CLOUD_ADMIN_EMAIL` and
+`CLOUD_ADMIN_PASSWORD` for the initial online administrator; local `SEED_ADMIN_*`
+credentials are separate. `CLOUD_STRIPE_WEBHOOK_SECRET` is independent of the local
+Stripe listener secret. SSH credentials remain in `CLOUD_SSH_PRIVATE_KEY_B64`.
+The server's private `/opt/agentic-converter/.env` contains only required runtime
+configuration. These files and values must never be committed or sent to evaluators.
+
+On the server, always use all three Compose files:
+
+```bash
+cd /opt/agentic-converter
+sudo docker compose -f docker-compose.yml -f docker-compose.public.yml -f docker-compose.cloud.yml ps
+sudo docker compose -f docker-compose.yml -f docker-compose.public.yml -f docker-compose.cloud.yml up -d --no-build --wait
+```
+
+Exact published backend/worker and domain-specific frontend tags are pinned in the
+server `.env`; restarting does not silently choose a new `latest` image. To update,
+first publish and select tested immutable tags, then pull and recreate with the same
+three files. Never run the local/demo override or expose database/worker ports here.
+
+Verified publicly: homepage HTTPS, HTTP-to-HTTPS/www routing, database/cache health,
+administrator sign-in, authenticated account/admin summaries, worker health, and a
+harmless signed webhook probe. This is a student demonstration, not a production
+security certification. Real email delivery, independent backups, generated-code
+isolation reviews, and a full cloud conversion/payment acceptance run remain distinct
+from these deployment checks. Existing local conversions are not copied to the fresh
+cloud database.
+
 ## One-Click Local Startup
 
 After the first installation, Docker Desktop can start the existing
@@ -134,8 +191,9 @@ frontend/API/worker/database architecture. It exposes only Caddy on ports 80/443
 routes `/api/*` to the API, keeps database/Redis/worker ports unpublished, and uses
 `preview.<PUBLIC_APP_HOST>` for the separate generated-app origin. Production CORS
 allows the configured frontend rather than reflecting arbitrary browser origins.
-This setup is prepared code, not evidence of a completed cloud deployment or a
-production security certification.
+For the actual student deployment and its verified scope, see
+[Current Student Deployment](#current-student-deployment). These files alone do not
+constitute a production security certification.
 
 On a separately provisioned x86-64 server, configure its own private root `.env`:
 

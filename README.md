@@ -25,6 +25,11 @@ agent-assisted workflow that turns a static website URL or ZIP archive into a
 database-backed application with editable pages, media, collections, and a generated
 admin panel. The original HTML, CSS, scripts, fonts, and assets are retained where captured.
 
+**Online demonstration:** [agenticconverter.tech](https://agenticconverter.tech).
+Hosted independently on Azure using Docker Compose. Payments use Stripe test mode;
+recovery emails go to the Mailtrap sandbox, not users' real inboxes. See the
+[deployment and cost notes](docs/hosting.md#current-student-deployment).
+
 ![Agentic Converter interface](docs/assets/home-desktop.png)
 
 ## What It Does
