@@ -9,6 +9,8 @@ const values = {
   CLOUD_PREVIEW_API_SECRET: 'test-only-cloud-preview-secret-for-configuration',
   JWT_SECRET: 'local-session-must-stay-local', DB_PASSWORD: 'local-database-must-stay-local',
   STRIPE_SECRET_KEY: 'sk_test_fixture', GROQ_API_KEY: 'test-only-provider',
+  STRIPE_WEBHOOK_SECRET: 'whsec_local_must_stay_local',
+  CLOUD_STRIPE_WEBHOOK_SECRET: 'whsec_cloud_fixture',
   MAILTRAP_API_TOKEN: 'management-token-must-stay-local',
 };
 const tag = 'sha-' + 'a'.repeat(40);
@@ -23,7 +25,14 @@ test('maps separate cloud secrets and exact image tags without exporting local/m
   assert.equal(remote.PREVIEW_PUBLIC_URL, 'https://preview.agenticconverter.tech');
   assert.equal(remote.MAILTRAP_API_TOKEN, undefined);
   assert.equal(remote.CLOUD_SSH_PRIVATE_KEY_B64, undefined);
+  assert.equal(remote.STRIPE_WEBHOOK_SECRET, values.CLOUD_STRIPE_WEBHOOK_SECRET);
+  assert.equal(remote.TRUST_PROXY, 'uniquelocal');
   assert.equal(values.DB_PASSWORD, 'local-database-must-stay-local');
+});
+
+test('never uses the local Stripe listener secret when a public webhook is not configured', () => {
+  const remote = cloudEnvironment({ ...values, CLOUD_STRIPE_WEBHOOK_SECRET: undefined }, 'agenticconverter.tech', tag, tag, publicTag);
+  assert.equal(remote.STRIPE_WEBHOOK_SECRET, '');
 });
 
 test('does not silently change existing cloud or local credentials', () => {

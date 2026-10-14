@@ -23,7 +23,7 @@ services:
       FRONTEND_URL: https://${PUBLIC_APP_HOST:?Set the converter subdomain}
       CORS_ORIGIN: https://${PUBLIC_APP_HOST:?Set the converter subdomain}
       PREVIEW_PUBLIC_URL: https://preview.${PUBLIC_APP_HOST:?Set the converter subdomain}
-      TRUST_PROXY: '1'
+      TRUST_PROXY: uniquelocal
       SMTP_ALLOW_INSECURE_LOCAL: 'false'
 
   frontend:
