@@ -9,6 +9,7 @@ import { errorHandler } from './middleware/errorHandler';
 import { logger } from './utils/logger';
 import { checkDatabaseConnection } from './config/database';
 import { checkRedisConnection } from './config/redis';
+import { corsOptions } from './config/cors';
 
 const app = express();
 
@@ -25,18 +26,7 @@ app.use(helmet({
 }));
 
 // CORS configuration
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl) or any localhost/dev origin
-    if (!origin || origin.includes('localhost') || origin.includes('127.0.0.1')) {
-      return callback(null, true);
-    }
-    return callback(null, true);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+app.use(cors(corsOptions()));
 
 // Logging
 app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) } }));
