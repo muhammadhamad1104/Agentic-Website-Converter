@@ -20,3 +20,7 @@ preview.{$PUBLIC_APP_HOST} {
 	header Referrer-Policy no-referrer
 	reverse_proxy backend:5001
 }
+
+www.{$PUBLIC_APP_HOST} {
+	redir https://{$PUBLIC_APP_HOST}{uri} permanent
+}

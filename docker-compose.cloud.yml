@@ -1,0 +1,31 @@
+# Use after docker-compose.public.yml. All three tags must have been published first.
+services:
+  backend:
+    build: !reset null
+    image: ghcr.io/muhammadhamad1104/agentic-website-converter-backend:${CLOUD_BACKEND_TAG:?Set a published backend tag}
+    pull_policy: missing
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  worker:
+    build: !reset null
+    image: ghcr.io/muhammadhamad1104/agentic-website-converter-worker:${CLOUD_WORKER_TAG:?Set a published worker tag}
+    pull_policy: missing
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  frontend:
+    build: !reset null
+    image: ghcr.io/muhammadhamad1104/agentic-website-converter-frontend:${CLOUD_FRONTEND_TAG:?Set the domain-specific frontend tag}
+    pull_policy: missing
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
