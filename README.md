@@ -1,153 +1,277 @@
-# Agentic Static to Dynamic Website Converter
+<p align="center">
+  <img src="apps/frontend/public/brand/mark.svg" width="64" alt="Agentic Converter logo" />
+</p>
 
-Welcome to the **Agentic Static to Dynamic Website Converter**! This project utilizes autonomous AI agents to analyze, parse, and intelligently convert static websites (HTML/CSS/JS) into fully dynamic, full-stack applications with databases, API routes, and React frontends.
+<h1 align="center">Agentic Converter</h1>
 
-This repository is structured as a monorepo consisting of three main microservices: the **Frontend**, the **Backend**, and the **AI Worker**. 
+<p align="center">Static websites. Dynamic content. Your own admin workspace.</p>
 
----
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-365749" alt="MIT license" /></a>
+  <img src="https://img.shields.io/badge/Frontend-React%20%2B%20TypeScript-314139" alt="React and TypeScript" />
+  <img src="https://img.shields.io/badge/Worker-Python%20%2B%20LangGraph-314139" alt="Python and LangGraph" />
+  <img src="https://img.shields.io/badge/Runtime-Docker%20Compose-314139" alt="Docker Compose" />
+</p>
 
-## 🏗️ Architecture & Technologies
+<p align="center">
+  <a href="#quick-start">Quick Start</a> &nbsp; / &nbsp;
+  <a href="#architecture">Architecture</a> &nbsp; / &nbsp;
+  <a href="docs/handover.md">Professor Handover</a> &nbsp; / &nbsp;
+  <a href="#testing">Testing</a>
+</p>
 
-The platform leverages modern, cutting-edge technologies across all layers of the stack:
+Agentic Converter is Muhammad Hamad's final-year project: a source-preserving,
+agent-assisted workflow that turns a static website URL or ZIP archive into a
+database-backed application with editable pages, media, collections, and a generated
+admin panel. The original HTML, CSS, scripts, fonts, and assets are retained where captured.
 
-### 1. Frontend (`apps/frontend`)
-The user interface is a highly interactive, 3D-animated web application designed to be visually stunning and intuitive.
-- **Framework:** React 19 (TypeScript) & Vite
-- **Styling:** Tailwind CSS & Radix UI (accessible headless components)
-- **Animations & 3D:** Three.js (React Three Fiber), Framer Motion, and GSAP
-- **State & Routing:** React Router DOM v6
-- **Testing:** Vitest with JSDOM and React Testing Library
+![Agentic Converter interface](docs/assets/home-desktop.png)
 
-### 2. Backend (`apps/backend`)
-A robust, scalable REST API that manages users, sites, conversion jobs, and orchestrates tasks.
-- **Framework:** Node.js with Express & TypeScript
-- **Database ORM:** Prisma Client (v5)
-- **Database:** PostgreSQL (for robust relational data storage)
-- **Job Queues:** BullMQ backed by Redis for asynchronous job processing
-- **Authentication:** JWT (JSON Web Tokens) with Argon2 password hashing
-- **Testing:** Jest & Supertest
+## What It Does
 
-### 3. AI Worker (`apps/worker`)
-The brain of the platform. This service processes the actual website conversion using Large Language Models and specialized agents.
-- **Framework:** Python & FastAPI
-- **AI Orchestration:** LangGraph (for multi-agent workflows)
-- **Capabilities:** Code parsing, database schema generation, API route generation, and React component generation
-- **Testing:** pytest & HTTPX
+| Stage | Result |
+| --- | --- |
+| Capture | Static-source classification, URL crawling or safe ZIP ingestion, pages and assets |
+| Infer And Review | Agent-assisted content schema with explicit user approval |
+| Generate | Source-preserving public website, database, APIs, and responsive admin |
+| Validate | Build, runtime, source-completeness, and quality reports |
+| Preview And Export | Navigable local preview and downloadable application source |
 
-### 4. DevOps & Infrastructure (Upcoming/Planned)
-- **Containerization:** Docker & Docker Compose
-- **Orchestration:** Kubernetes (K8s) for high availability and scaling
-- **Infrastructure as Code (IaC):** Terraform for automated cloud provisioning
-- **CI/CD:** GitHub Actions for automated testing and deployment
+The platform includes profile photos, conversion history, live account statistics,
+role-aware dashboards, Stripe checkout, and emailed password recovery.
 
----
+| Account | Access |
+| --- | --- |
+| Starter | 5 conversions total |
+| Pro | Unlimited conversions, $199 USD one-time |
+| Administrator | Unlimited access and platform administration |
 
-## 🚀 Features
+## Architecture
 
-- **3D Interactive Wizard:** A step-by-step conversion wizard featuring stunning 3D graphics and smooth animations.
-- **URL or ZIP Sources:** Convert a live static website URL or upload a static website ZIP in the same wizard, with full archive capture, generated admin, preview and source download.
-- **User Authentication:** Secure registration and login flows with JWT and password hashing.
-- **Asynchronous Processing:** BullMQ safely handles long-running AI conversion tasks without blocking the backend.
-- **Comprehensive Testing:** End-to-end testing coverage across the frontend components, backend APIs, and Python worker endpoints.
-- **Agentic Workflow:** Employs advanced AI agents that independently read source code, deduce intent, and write full-stack code.
-- **Modern UI/UX:** Features a beautiful, dark-themed, glassmorphic UI with loading skeletons, custom 404 pages, and micro-interactions.
+```text
+Browser / React + Vite + Three.js
+                    |
+          Express / TypeScript API
+            |                 |
+       PostgreSQL          Redis / BullMQ
+                              |
+                 FastAPI / LangGraph worker
+                              |
+            Capture -> Infer -> Approve -> Generate
+                              |
+                     Validate -> Export
+                              |
+             Generated React + Express + Prisma app
+                 SQLite content database + admin
+```
 
----
+| Directory | Responsibility |
+| --- | --- |
+| `apps/frontend` | React 18, TypeScript, Vite, Three.js, GSAP, Zustand, and React Router |
+| `apps/backend` | Express API, Prisma/PostgreSQL, JWT/Argon2 auth, queues, billing, preview gateway |
+| `apps/worker` | Python/FastAPI, LangGraph, capture, LLM inference, generation, validation, export |
+| `scripts` | Private environment preparation and local payment/email setup |
+| `docs` | Handover guide and implementation notes |
+| `infra` | Optional cloud/infrastructure templates, not the local demo deployment |
 
-## 🛠️ Getting Started
+## Quick Start
 
-### 🐳 Running with Docker (Recommended)
+Use Docker Compose for the supported demonstration setup. Node.js 22+ is required
+on the host for the setup helpers. Docker must be running; allow disk space for
+the worker's Chromium and generated-app dependencies. Conversion requires internet
+access and a configured LLM provider.
 
-The easiest way to run the entire Agentic Converter platform locally is using Docker. This automatically orchestrates the Frontend, Backend, Python AI Worker, PostgreSQL database, and Redis cache.
+```bash
+git clone https://github.com/muhammadhamad1104/Agentic-Website-Converter.git
+cd Agentic-Website-Converter
+node scripts/prepare-env.mjs
+```
 
-**Prerequisites:**
-- [Docker](https://www.docker.com/get-started) and Docker Compose installed on your system.
+The helper creates the root `.env` from `.env.example`, generates private JWT and
+backend-to-worker secrets, preserves existing provider credentials, and sets private
+file permissions. Add your provider credentials to this file. Never commit it.
 
-**Steps:**
+For a **first installation**, initialize the database before starting the API:
 
-1. **Clone the repository:**
-   ```bash
-   git clone <repo-url>
-   cd Agentic-Converter
-   ```
+```bash
+docker compose build backend frontend worker
+docker compose up -d --wait db redis
+docker compose run --rm --no-deps --pull never backend npm run migrate
+docker compose up -d --no-build
+```
 
-2. **Configure Environment Variables:**
-   ```bash
-   cp .env.example .env
-   ```
-   Open the `.env` file and add your LLM API keys (e.g., `OPENAI_API_KEY`, `KIMI_API_KEY`, `GEMINI_API_KEY`).
+`npm run migrate` synchronizes the Prisma schema with `prisma db push`. It does not
+use a production migration-history workflow and never passes `--accept-data-loss`.
+Back up an existing database before schema changes.
 
-3. **Build and Start all services:**
-   ```bash
-   docker compose up -d --build
-   ```
+| Service | Local Address |
+| --- | --- |
+| Application | [localhost:5173](http://localhost:5173) |
+| API health | [localhost:5000/api/health](http://localhost:5000/api/health) |
+| Worker API documentation | [localhost:8000/docs](http://localhost:8000/docs) |
+| Generated preview gateway | `localhost:5001`, accessed through the project preview |
 
-4. **Access the Application:**
-   - **Frontend UI / Wizard:** [http://localhost:5173](http://localhost:5173)
-   - **Backend API:** [http://localhost:5000](http://localhost:5000)
-   - **AI Worker API:** [http://localhost:8000](http://localhost:8000)
+Register a Starter account through the application. To create a separate platform
+administrator, set `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` (at least 12 characters),
+and optionally `SEED_ADMIN_NAME` in `.env`, then run:
 
-**Useful Docker Commands:**
-- View logs for all services: `docker compose logs -f`
-- View logs for a specific service: `docker compose logs -f agentic_worker`
-- Stop the application: `docker compose down`
+```bash
+docker compose run --rm --no-deps --pull never backend npm run seed
+```
 
----
+Seeding does not reset existing passwords or elevate an existing non-admin account.
+This is the **platform admin**, separate from each converted application's `/admin`.
 
-### 💻 Local Development Setup (Manual)
+### Updating And Restarting
 
-If you prefer to run the services directly on your host machine for development:
+```bash
+docker compose up -d --build backend frontend worker
+docker compose ps
+```
 
-**Prerequisites**
-- Node.js (v20+)
-- Python (3.10+)
-- PostgreSQL
-- Redis
-- Prisma CLI
+Changed Docker layers are rebuilt; unchanged layers remain cached. The frontend
+serves the compiled image, not a misleading source bind mount. An environment-only
+backend change requires recreation, not a simple restart:
 
-### Installation
+```bash
+docker compose up -d --no-deps --no-build --force-recreate backend
+```
 
-1. **Install Frontend Dependencies:**
-   ```bash
-   cd apps/frontend
-   npm install
-   ```
+If `PREVIEW_API_SECRET` changes, recreate backend and worker together. If a `VITE_*`
+setting changes, rebuild the frontend because those values are embedded at build time.
+If Docker Desktop's build resolver reports `EAI_AGAIN`, use the optional project-scoped
+builder instead of changing global Docker settings:
 
-2. **Install Backend Dependencies & Database:**
-   ```bash
-   cd apps/backend
-   npm install
-   npx prisma generate
-   npx prisma db push
-   ```
+```bash
+node scripts/build-project.mjs
+docker compose up -d --no-build
+```
 
-3. **Install Worker Dependencies:**
-   ```bash
-   cd apps/worker
-   python -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
+Its build DNS is configured in `scripts/buildkitd.toml`; adapt it for networks requiring
+private resolvers. Runtime container DNS uses `APP_DNS_PRIMARY`/`APP_DNS_SECONDARY` instead.
+Stop everything, including the optional test services, with:
 
-### Running the Project
+```bash
+docker compose --profile demo down
+```
 
-Start the services locally in separate terminal tabs:
+Do not add `-v`: that deletes the PostgreSQL and Redis volumes. Worker jobs, ZIP
+uploads, and generated output persist in the worker's local data directories.
 
-- **Frontend:** `cd apps/frontend && npm run dev`
-- **Backend:** `cd apps/backend && npm run dev`
-- **Worker:** `cd apps/worker && uvicorn main:app --reload`
+## Configuration And Secrets
 
----
+Docker Compose uses the **root `.env`**. Optional service-local `.env` files are for
+manual development and are also ignored. `.env.example` files contain templates only.
 
-## 🧪 Testing
+| Configuration | Variables |
+| --- | --- |
+| Private application secrets | `JWT_SECRET`, `PREVIEW_API_SECRET` |
+| LLM providers | `OPENAI_API_KEY`, `KIMI_API_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, optional alternatives |
+| Payments | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `VITE_STRIPE_PUBLISHABLE_KEY` |
+| Recovery email | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `FRONTEND_URL` |
+| Platform admin setup | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_NAME` |
 
-The platform includes comprehensive test suites to ensure stability.
+Secrets are passed to containers as runtime environment variables. Docker administrators
+can inspect those variables; `.env` is not an encrypted vault. The Stripe **publishable**
+key is intentionally public in the browser. No secret API key should ever use a `VITE_`
+prefix. Generated applications have their own private backend `.env`.
 
-- **Frontend Tests:** `npm run test` inside `apps/frontend`
-- **Backend Tests:** `npm run test` inside `apps/backend`
-- **Worker Tests:** `pytest` inside `apps/worker`
+Git and Docker build exclusions cover environment variants and private key files.
+Ignoring a file does not erase an older commit: rotate previously exposed credentials.
+See [the security notes](SECURITY.md) before publishing or sharing a handover archive.
 
----
+## Payments And Recovery Email
 
-## 📄 License
-This project is developed as a Final Year Project by Muhammad Hamad. All rights reserved.
+Configure matching Stripe **test** keys in `.env`, then run:
+
+```bash
+node scripts/setup-local-services.mjs
+```
+
+This starts the optional `demo` profile's Stripe CLI listener, privately stores its
+webhook secret, and recreates the backend. It refuses live keys, production environments,
+and replacement of a different existing webhook secret. Keep the listener running for
+automatic Pro activation during the demonstration.
+
+Use Stripe's `4242 4242 4242 4242` test card, a future expiry, and any three-digit CVC.
+Test-mode checkout does not charge real money. The signed webhook, not the browser,
+grants Pro access.
+
+For email, choose either:
+
+- **Mailtrap Sandbox:** `SMTP_HOST=sandbox.smtp.mailtrap.io`, port `2525`,
+  `SMTP_SECURE=false`, the sandbox's SMTP username/password, and a plain sender email.
+  Set `SMTP_ALLOW_INSECURE_LOCAL=false`. Read messages in your Mailtrap sandbox.
+- **Local Mailpit:** Leave SMTP blank and run the setup helper. It configures a
+  development-only inbox at [localhost:8025](http://localhost:8025).
+
+Both are testing inboxes, **not real Gmail delivery**. Existing external SMTP settings
+are preserved by the helper. `MAILTRAP_API_TOKEN` is optional account-management/testing
+tooling, not the sandbox SMTP password. Reset links expire after 15 minutes, are single-use,
+and revoke old sign-in sessions after a successful reset. Password changes trigger a
+security notification. Signup email verification is not implemented.
+
+## Generated Applications
+
+Open a completed project and select **Preview**. The preview address bar supports paths,
+queries, and `/admin`; admin links are not injected into the public website. Leaving the
+project screen releases its preview lease, and idle runtimes are stopped.
+
+Download and extract the application, then follow its own README and export report.
+Generated local setup creates `backend/.env`; local-only demo admin credentials are
+`admin@gmail.com` / `admin123`. Change `ADMIN_EMAIL` and `ADMIN_PASSWORD`, then restart
+the generated backend. Defaults are rejected in production mode or on a non-loopback
+bind address. Do not expose them through a proxy or tunnel.
+
+Export is best-effort when generated files exist. A downloadable ZIP may still contain
+capture/build warnings; `export-report.json` and runtime validation determine readiness.
+Full-site capture has no application page cap, but source availability, provider quotas,
+context windows, storage, and network failures still apply. Perfect fidelity is not guaranteed.
+
+## Testing
+
+```bash
+# Frontend components and workflows
+npm --prefix apps/frontend test
+
+# Backend API, plans, recovery, uploads, and preview isolation
+npm --prefix apps/backend test -- --runInBand
+
+# Setup helpers (Node.js 22+)
+node --test --test-isolation=none scripts/prepare-env.test.mjs scripts/setup-local-services.test.mjs
+
+# Worker suite, using an installed Python environment
+cd apps/worker
+python -m pytest -q
+```
+
+Install the respective service dependencies before running tests outside Docker.
+The worker's opt-in generated application test builds a real app, exercises its admin,
+and checks persistence and browser behavior:
+
+```bash
+cd apps/worker
+RUN_RUNTIME_INTEGRATION=1 python -m pytest tests/test_generated_runtime_integration.py -q
+```
+
+See [worker diagnostics](apps/worker/README.md) for source comparisons and real
+provider-backed conversion acceptance runs. These can consume provider credits.
+
+## Handover And Deployment
+
+The [professor handover guide](docs/handover.md) includes the demo sequence, recovery
+checks, restart commands, expected limitations, and a deployment checklist.
+The supported local demo is not a claim of production certification.
+
+Before public deployment: configure HTTPS and a dedicated preview origin, real Stripe
+webhooks, a verified email sender, private database access, backups, unique credentials,
+and monitoring. Review infrastructure templates before applying them.
+`scripts/deploy.sh` provisions AWS resources and can incur charges; it is not a demo step.
+
+## License
+
+Original project code is released under the [MIT License](LICENSE).
+Copyright (c) 2026 Muhammad Hamad.
+
+Third-party dependencies, sample images, and captured website content retain their own
+licenses and ownership. Convert only content you have permission to use.
