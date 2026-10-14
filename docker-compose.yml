@@ -1,4 +1,28 @@
 services:
+  mailpit:
+    image: axllent/mailpit:v1.27.4
+    profiles: [demo]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: 500
+    volumes:
+      - mailpit_data:/data
+
+  stripe-listener:
+    image: stripe/stripe-cli:v1.53.1
+    profiles: [demo]
+    restart: unless-stopped
+    dns:
+      - ${APP_DNS_PRIMARY:-1.1.1.1}
+      - ${APP_DNS_SECONDARY:-8.8.8.8}
+    environment:
+      STRIPE_API_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_DEVICE_NAME: agentic-converter-local
+    command: listen --events payment_intent.succeeded --forward-to http://backend:5000/api/payments/webhook
+
   db:
     image: postgres:15-alpine
     container_name: agentic_db
@@ -8,7 +32,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
       POSTGRES_DB: ${DB_NAME:-agentic_converter}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,7 +46,7 @@ services:
     container_name: agentic_redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -34,6 +58,9 @@ services:
 
   backend:
     pull_policy: build
+    dns:
+      - ${APP_DNS_PRIMARY:-1.1.1.1}
+      - ${APP_DNS_SECONDARY:-8.8.8.8}
     build: 
       context: ./apps/backend
       dockerfile: Dockerfile
@@ -46,12 +73,12 @@ services:
       - PORT=5000
       - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-agentic_converter}
       - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=${JWT_SECRET:-super_secret_key_change_me_in_production}
+      - JWT_SECRET=${JWT_SECRET:?Run node scripts/prepare-env.mjs first}
       - WORKER_API_URL=http://worker:8000
       - PREVIEW_API_SECRET=${PREVIEW_API_SECRET}
       - PREVIEW_PORT=5001
       - PREVIEW_PUBLIC_URL=${PREVIEW_PUBLIC_URL:-}
-      - CORS_ORIGIN=http://localhost:5173
+      - CORS_ORIGIN=${FRONTEND_URL:-http://localhost:5173}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -64,6 +91,9 @@ services:
       - TRUST_PROXY=${TRUST_PROXY:-}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - SEED_ADMIN_EMAIL=${SEED_ADMIN_EMAIL:-}
+      - SEED_ADMIN_PASSWORD=${SEED_ADMIN_PASSWORD:-}
+      - SEED_ADMIN_NAME=${SEED_ADMIN_NAME:-Administrator}
     depends_on:
       db:
         condition: service_healthy
@@ -74,12 +104,15 @@ services:
 
   worker:
     pull_policy: build
+    dns:
+      - ${APP_DNS_PRIMARY:-1.1.1.1}
+      - ${APP_DNS_SECONDARY:-8.8.8.8}
     build:
       context: ./apps/worker
       dockerfile: Dockerfile
     container_name: agentic_worker
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
       - PREVIEW_API_SECRET=${PREVIEW_API_SECRET}
@@ -130,10 +163,9 @@ services:
       - VITE_API_URL=http://localhost:5000
     depends_on:
       - backend
-    volumes:
-      - ./apps/frontend/src:/app/src
     restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
+  mailpit_data:

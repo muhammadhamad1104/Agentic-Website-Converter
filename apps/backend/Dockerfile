@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y python3 make g++ openssl && rm -rf /var
 COPY package.json package-lock.json* ./
 
 # Install all dependencies (including devDependencies for build)
-RUN npm install --legacy-peer-deps
+RUN npm ci --legacy-peer-deps --no-audit --no-fund
 
 # Copy Prisma schema and generate client before copying source (for layer caching)
 COPY prisma ./prisma/
@@ -31,11 +31,13 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 
 # Install only production dependencies
-RUN npm install --omit=dev --legacy-peer-deps
+RUN npm ci --omit=dev --legacy-peer-deps --no-audit --no-fund
 
 # Copy generated Prisma client and built output
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+RUN node -e "const fs=require('node:fs'); fs.mkdirSync('node_modules/.bin',{recursive:true}); fs.symlinkSync('../prisma/build/index.js','node_modules/.bin/prisma');"
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/dist ./dist
 

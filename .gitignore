@@ -10,6 +10,22 @@ env/
 .env
 .env.local
 *.env
+.env.*
+!.env.example
+*.env.*
+!*.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.aws/
+secrets/
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+*.tfvars
+!*.tfvars.example
 
 # Build outputs
 dist/

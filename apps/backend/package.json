@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "nodemon --exec ts-node src/server.ts",
-    "start": "ts-node src/server.ts",
-    "build": "tsup src/server.ts --format cjs",
+    "start": "node dist/server.js",
+    "build": "tsup src/server.ts src/seeds/run.ts --format cjs",
     "test": "jest --passWithNoTests",
-    "migrate": "ts-node src/migrations/run.ts",
-    "seed": "ts-node src/seeds/run.ts"
+    "migrate": "prisma db push",
+    "seed": "node dist/seeds/run.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",

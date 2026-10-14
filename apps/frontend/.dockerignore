@@ -1,6 +1,13 @@
 node_modules
 dist
 .env
+.env.*
+*.env
+*.env.*
+*.pem
+*.key
+*.p12
+*.pfx
 .DS_Store
 coverage
 build

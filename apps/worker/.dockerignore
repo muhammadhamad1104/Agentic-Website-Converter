@@ -4,5 +4,12 @@ __pycache__
 .pytest_cache
 .git
 .env
+.env.*
+*.env
+*.env.*
+*.pem
+*.key
+*.p12
+*.pfx
 data
 generated
