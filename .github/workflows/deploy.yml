@@ -1,33 +1,77 @@
-name: Build and Deploy
+name: Publish Container Images
 
 on:
   push:
     branches:
       - main
+    paths:
+      - 'apps/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
 
-env:
-  AWS_REGION: us-east-1
+permissions:
+  contents: read
+
+concurrency:
+  group: containers-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build Docker Images
+  publish:
+    name: Publish ${{ matrix.service }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [frontend, backend, worker]
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set Image Name
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+          SERVICE: ${{ matrix.service }}
+        run: echo "name=ghcr.io/${REPOSITORY,,}-${SERVICE}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
-      - name: Build Frontend
-        run: docker build -t agentic-converter-frontend:latest apps/frontend
+      - name: Log In to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Backend
-        run: docker build -t agentic-converter-backend:latest apps/backend
+      - name: Image Tags and Labels
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
 
-      - name: Build Worker
-        run: docker build -t agentic-converter-worker:latest apps/worker
+      - name: Build and Publish
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/${{ matrix.service }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            VITE_API_URL=${{ vars.VITE_API_URL || 'http://localhost:5000' }}
+            VITE_STRIPE_PUBLISHABLE_KEY=${{ vars.VITE_STRIPE_PUBLISHABLE_KEY }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
-  # Note: The Terraform and Kubernetes deployment steps are left manual for safety 
-  # to avoid unexpected AWS billing charges on automatic pushes.
-  # Run `scripts/deploy.sh` locally to deploy the infrastructure.
+  # Publishing images does not provision cloud resources or upload runtime secrets/data.

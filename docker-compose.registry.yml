@@ -1,0 +1,21 @@
+# Requires Docker Compose 2.24.4+. Runtime credentials remain in your private root .env.
+services:
+  backend:
+    build: !reset null
+    image: ghcr.io/muhammadhamad1104/agentic-website-converter-backend:${CONTAINER_TAG:-latest}
+    pull_policy: always
+
+  frontend:
+    build: !reset null
+    image: ghcr.io/muhammadhamad1104/agentic-website-converter-frontend:${CONTAINER_TAG:-latest}
+    pull_policy: always
+
+  worker:
+    build: !reset null
+    image: ghcr.io/muhammadhamad1104/agentic-website-converter-worker:${CONTAINER_TAG:-latest}
+    pull_policy: always
+    # Do not overlay the published code with a checkout from another image version.
+    volumes: !override
+      - ./apps/worker/data:/app/data
+      - ./apps/worker/generated:/app/generated
+      - ./apps/worker/data/crawl-cache:/tmp/py_agent_crawl_cache
