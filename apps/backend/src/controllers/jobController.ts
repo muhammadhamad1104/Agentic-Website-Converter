@@ -9,6 +9,32 @@ import { zipSource } from '../services/sourceUploads';
 
 const prisma = new PrismaClient();
 const WORKER_URL = process.env.WORKER_URL || process.env.WORKER_API_URL || 'http://localhost:8000';
+const workerOutages = new Map<string, number>();
+
+const workerState = (job: any): { status: string; siteStatus: SiteStatus } | null => {
+  const status = String(job?.status || '').toLowerCase();
+  if (['failed', 'error', 'cancelled'].includes(status)) return { status: 'FAILED', siteStatus: 'FAILED' };
+  if (['completed', 'validated', 'ready', 'exported', 'package_approved'].includes(status))
+    return { status: 'COMPLETED', siteStatus: 'READY' };
+  if (['approved', 'generating', 'generated', 'template_ready', 'generation_approved', 'backend_generated',
+    'frontend_generated', 'admin_generated', 'smoke_validated', 'consistency_validated'].includes(status))
+    return { status: 'GENERATING', siteStatus: 'BUILDING' };
+  if (['awaiting_approval', 'schema_proposed'].includes(status)) return { status: 'AWAITING_APPROVAL', siteStatus: 'ANALYZING' };
+  if (status === 'inferring_schema') return { status: 'INFERRING_SCHEMA', siteStatus: 'ANALYZING' };
+  if (['crawled', 'extracted'].includes(status)) return { status: 'CRAWLED', siteStatus: 'ANALYZING' };
+  if (['draft', 'pending', 'crawling', 'processing'].includes(status)) return { status: 'PROCESSING', siteStatus: 'ANALYZING' };
+  return null;
+};
+
+const workerRequestError = (error: any, res: Response, next: NextFunction) => {
+  if (error.response?.status) {
+    const status = error.response.status;
+    return res.status(status >= 500 ? 503 : status).json({ error: error.response.data?.detail || 'Worker request failed', retryable: status >= 500 });
+  }
+  if (error.isAxiosError || ['ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT'].includes(error.code))
+    return res.status(503).json({ error: 'Worker is temporarily unavailable. Retry to resume this conversion.', retryable: true });
+  next(error);
+};
 
 export const createJob = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -77,10 +103,13 @@ export const getJobStatus = async (req: Request, res: Response, next: NextFuncti
     }
 
     let workerDetails: any = null;
+    let workerConnection: any = null;
     if (crawl.logRef) {
       try {
         const workerRes = await axios.get(`${WORKER_URL}/api/jobs/${crawl.logRef}`, { timeout: 3000 });
         workerDetails = workerRes.data.job;
+        if (!workerDetails?.status) throw new Error('Worker returned no job state');
+        workerOutages.delete(crawl.logRef);
 
         if (workerDetails) {
           const crawlArtifacts = workerDetails.crawl_artifacts || {};
@@ -117,25 +146,9 @@ export const getJobStatus = async (req: Request, res: Response, next: NextFuncti
               await prisma.crawl.update({ where: { id: crawl.id }, data: { durationMs: measured } });
               crawl.durationMs = measured;
             }
-            const wStatus = (workerDetails.status || '').toUpperCase();
-            let targetCrawlStatus: string | null = null;
-            let targetSiteStatus: SiteStatus | null = null;
-
-            if (['COMPLETED', 'VALIDATED', 'READY', 'EXPORTED', 'PACKAGE_APPROVED'].includes(wStatus)) {
-              targetCrawlStatus = 'COMPLETED';
-              targetSiteStatus = 'READY';
-            } else if (['GENERATED', 'GENERATING'].includes(wStatus)) {
-              targetCrawlStatus = 'GENERATING';
-              targetSiteStatus = 'BUILDING';
-            } else if (wStatus === 'CRAWLED') {
-              targetCrawlStatus = 'CRAWLED';
-              targetSiteStatus = 'ANALYZING';
-            } else if (['AWAITING_APPROVAL', 'SCHEMA_PROPOSED'].includes(wStatus)) {
-              targetCrawlStatus = 'AWAITING_APPROVAL';
-            } else if (wStatus === 'FAILED') {
-              targetCrawlStatus = 'FAILED';
-              targetSiteStatus = 'FAILED';
-            }
+            const mapped = workerState(workerDetails);
+            const targetCrawlStatus = mapped?.status;
+            const targetSiteStatus = mapped?.siteStatus;
 
             if (targetCrawlStatus && targetCrawlStatus !== crawl.status) {
               await prisma.crawl.update({
@@ -153,15 +166,23 @@ export const getJobStatus = async (req: Request, res: Response, next: NextFuncti
             }
           }
         }
-      } catch (err) {
-        // Silently ignore worker connectivity issues on poll
+      } catch (err: any) {
+        const unavailableSince = workerOutages.get(crawl.logRef) ?? Date.now();
+        workerOutages.set(crawl.logRef, unavailableSince);
+        const missing = err.response?.status === 404;
+        workerConnection = { status: missing ? 'missing' : 'unavailable', retryable: !missing, since: unavailableSince,
+          message: missing ? 'Worker job is missing. Conversion state could not be recovered.' : 'Worker is temporarily unavailable. Retry to resume this conversion.' };
+        // Stop indefinite UI polling without overwriting a conversion that may
+        // still be running. A successful later poll restores its real state.
+        if (missing || Date.now() - unavailableSince >= 60000) crawl.status = 'FAILED';
       }
     }
     
     res.json({
       job: {
         ...crawl,
-        workerJob: workerDetails
+        workerJob: workerDetails,
+        ...(workerConnection ? { workerConnection } : {})
       }
     });
   } catch (error) {
@@ -175,21 +196,40 @@ export const runJob = async (req: Request, res: Response, next: NextFunction) =>
     const crawl = await prisma.crawl.findUnique({ where: { id } });
     if (!crawl) return res.status(404).json({ error: 'Job not found' });
 
+    if (crawl.logRef) {
+      const response = await axios.post(`${WORKER_URL}/api/jobs/${crawl.logRef}/run`, {}, { timeout: 5000 });
+      const mapped = workerState(response.data.job);
+      if (!mapped) return res.status(502).json({ error: 'Worker returned no job state' });
+      const updated = await prisma.crawl.update({ where: { id }, data: { status: mapped.status } });
+      await prisma.site.update({ where: { id: crawl.siteId }, data: { status: mapped.siteStatus } });
+      workerOutages.delete(crawl.logRef);
+      return res.json({ job: { ...updated, workerJob: response.data.job }, message: 'Job execution resumed' });
+    }
+
+    const queued = await conversionQueue.getJob(crawl.id);
+    if (queued) {
+      const state = await queued.getState();
+      if (state === 'failed') await queued.retry();
+      else if (state === 'completed') await queued.remove();
+      if (state !== 'completed') return res.json({ job: crawl, message: 'Job execution queued' });
+    }
+
     const site = await prisma.site.findUnique({ where: { id: crawl.siteId } });
     const source = zipSource(site);
     await conversionQueue.add('convert-site', {
       jobId: crawl.id,
       siteId: crawl.siteId,
       url: crawl.startUrl,
+      crawlDepth: crawl.maxDepth,
       ...(source ? { sourceUploadId: source.id, sourceOwnerId: site.ownerId } : {}),
       extractImages: true
     }, {
-      jobId: `${crawl.id}-${Date.now()}`
+      jobId: crawl.id
     });
 
     res.json({ job: crawl, message: 'Job execution started' });
   } catch (error) {
-    next(error);
+    workerRequestError(error, res, next);
   }
 };
 
@@ -200,16 +240,18 @@ export const inferSchema = async (req: Request, res: Response, next: NextFunctio
     if (!crawl) return res.status(404).json({ error: 'Job not found' });
 
     if (!crawl.logRef) return res.status(409).json({ error: 'Crawl has not started yet' });
-    await axios.post(`${WORKER_URL}/api/jobs/${crawl.logRef}/infer-schema`, {}, { timeout: 5000 });
+    const response = await axios.post(`${WORKER_URL}/api/jobs/${crawl.logRef}/infer-schema`, {}, { timeout: 5000 });
+    const mapped = workerState(response.data.job);
+    if (!mapped) return res.status(502).json({ error: 'Worker returned no job state' });
 
     const updatedCrawl = await prisma.crawl.update({
       where: { id },
-      data: { status: 'INFERRING_SCHEMA' }
+      data: { status: mapped.status }
     });
 
-    res.json({ job: updatedCrawl, message: 'Schema inference started' });
+    res.json({ job: { ...updatedCrawl, workerJob: response.data.job }, message: response.data.message || 'Schema inference started' });
   } catch (error) {
-    next(error);
+    workerRequestError(error, res, next);
   }
 };
 
@@ -217,27 +259,31 @@ export const submitSchemaDecision = async (req: Request, res: Response, next: Ne
   try {
     const id = req.params.id as string;
     const { decision, feedback } = req.body;
+    if (!['approved', 'rejected', 'pending'].includes(decision))
+      return res.status(400).json({ error: 'Decision must be approved, rejected, or pending' });
     const crawl = await prisma.crawl.findUnique({ where: { id } });
     if (!crawl) return res.status(404).json({ error: 'Job not found' });
 
     if (!crawl.logRef) return res.status(409).json({ error: 'Worker job reference missing' });
-    await axios.post(`${WORKER_URL}/api/jobs/${crawl.logRef}/schema-decision`, { decision, feedback }, { timeout: 5000 });
+    const response = await axios.post(`${WORKER_URL}/api/jobs/${crawl.logRef}/schema-decision`, { decision, feedback }, { timeout: 5000 });
+    const mapped = workerState(response.data.job);
+    if (!mapped) return res.status(502).json({ error: 'Worker returned no job state' });
 
     const updatedCrawl = await prisma.crawl.update({
       where: { id },
-      data: { status: decision === 'approved' ? 'GENERATING' : 'INFERRING_SCHEMA' }
+      data: { status: mapped.status }
     });
 
     if (crawl.siteId) {
       await prisma.site.update({
         where: { id: crawl.siteId },
-        data: { status: decision === 'approved' ? 'BUILDING' : 'ANALYZING' }
+        data: { status: mapped.siteStatus }
       }).catch(() => {});
     }
 
-    res.json({ job: updatedCrawl });
+    res.json({ job: { ...updatedCrawl, workerJob: response.data.job } });
   } catch (error) {
-    next(error);
+    workerRequestError(error, res, next);
   }
 };
 
