@@ -3,35 +3,33 @@ import { ArrowRight, Globe, Loader2, CheckCircle2, FileArchive, Upload, X } from
 import { useSiteStore } from '../../../../store/siteStore';
 import api from '../../../../services/api';
 import ConversionVisual from './ConversionVisual';
-const isValidTargetUrl = (val: string): boolean => {
-  const trimmed = val.trim().toLowerCase();
-  if (!trimmed || trimmed.length < 4) return false;
-
-  const withoutProtocol = trimmed.replace(/^https?:\/\//, '');
-  if (withoutProtocol === 'localhost' || withoutProtocol.startsWith('localhost:') || withoutProtocol.startsWith('127.0.0.1')) {
-    return true;
-  }
-
-  // Must contain valid domain name + TLD extension (e.g. kubernetes.io or https://kubernetes.io)
-  const domainPattern = /^([a-z0-9-]+\.)+[a-z]{2,}(\/.*)?$/;
-  return domainPattern.test(withoutProtocol);
+const formattedUrl = (value: string) => /^https?:\/\//i.test(value.trim()) ? value.trim() : 'https://' + value.trim();
+const isValidTargetUrl = (value: string): boolean => {
+  try {
+    const url = new URL(formattedUrl(value));
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password &&
+      (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || /^([a-z0-9-]+\.)+[a-z]{2,}$/i.test(url.hostname));
+  } catch { return false; }
 };
 
 
-export default function Step1Input({ onNext, setTargetUrl, setSiteId, setSourceType }: {
+export default function Step1Input({ onNext, setTargetUrl, setSiteId, setSourceType, initialUrl = '', initialSiteId, initialSourceType = 'URL' }: {
   onNext: () => void; setJobId: (id: string) => void; setTargetUrl: (url: string) => void; setSiteId: (id: string) => void;
   setSourceType?: (type: 'URL' | 'ZIP') => void;
+  initialUrl?: string; initialSiteId?: string | null; initialSourceType?: 'URL' | 'ZIP';
 }) {
-  const [mode, setMode] = useState<'URL' | 'ZIP'>('URL');
+  const [mode, setMode] = useState<'URL' | 'ZIP'>(initialSourceType);
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState(initialSourceType === 'URL' ? initialUrl : '');
   const [verified, setVerified] = useState('');
   const [checking, setChecking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const submitLock = useRef(false);
+  const [verificationAttempt, setVerificationAttempt] = useState(0);
   const { createSite, uploadZip } = useSiteStore();
   const valid = isValidTargetUrl(url);
   useEffect(() => {
@@ -41,7 +39,7 @@ export default function Step1Input({ onNext, setTargetUrl, setSiteId, setSourceT
     const controller = new AbortController();
     setChecking(true);
     const timer = window.setTimeout(async () => {
-      const formatted = /^https?:\/\//i.test(url.trim()) ? url.trim() : 'https://' + url.trim();
+      const formatted = formattedUrl(url);
       try {
         const result = await api.post('/sites/validate-url', { url: formatted }, { signal: controller.signal });
         if (active && result.data.valid) setVerified(url);
@@ -51,7 +49,8 @@ export default function Step1Input({ onNext, setTargetUrl, setSiteId, setSourceT
       } finally { if (active) setChecking(false); }
     }, 450);
     return () => { active = false; controller.abort(); window.clearTimeout(timer); };
-  }, [url, mode]);
+  }, [url, mode, verificationAttempt]);
+  const reuseArchive = mode === 'ZIP' && initialSourceType === 'ZIP' && !!initialSiteId && !file;
   const chooseFile = (selected?: File) => {
     setError(''); setFile(null);
     if (!selected) return;
@@ -61,7 +60,9 @@ export default function Step1Input({ onNext, setTargetUrl, setSiteId, setSourceT
   };
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (submitting || (mode === 'ZIP' ? !file : !valid || verified !== url)) return;
+    if (submitLock.current || (mode === 'ZIP' ? !file && !reuseArchive : !valid || verified !== url || checking)) return;
+    if (reuseArchive) { setTargetUrl(initialUrl); setSiteId(initialSiteId!); setSourceType?.('ZIP'); onNext(); return; }
+    submitLock.current = true;
     setSubmitting(true); setError('');
     if (mode === 'ZIP') {
       setProgress(0);
@@ -69,15 +70,16 @@ export default function Step1Input({ onNext, setTargetUrl, setSiteId, setSourceT
         const site = await uploadZip(file!, setProgress);
         setTargetUrl(site.sourceUrl); setSiteId(site.id); setSourceType?.('ZIP'); onNext();
       } catch (problem: any) { setError(problem.response?.data?.error || 'Unable to upload the website.'); }
-      finally { setSubmitting(false); }
+      finally { submitLock.current = false; setSubmitting(false); }
       return;
     }
-    const formatted = /^https?:\/\//i.test(url.trim()) ? url.trim() : 'https://' + url.trim();
+    const formatted = formattedUrl(url);
     try {
-      const site = await createSite({ sourceUrl: formatted, name: '', sourceType: 'URL' });
+      const site = initialSourceType === 'URL' && formatted === initialUrl && initialSiteId ? { id: initialSiteId } :
+        await createSite({ sourceUrl: formatted, name: '', sourceType: 'URL' });
       setTargetUrl(formatted); setSiteId(site.id); setSourceType?.('URL'); onNext();
     } catch (problem: any) { setError(problem.response?.data?.error || 'Unable to create the project.'); }
-    finally { setSubmitting(false); }
+    finally { submitLock.current = false; setSubmitting(false); }
   };
   return <form onSubmit={submit}>
     <section className="step-content"><div className="conversion-entry"><div className="conversion-source-form">
@@ -99,9 +101,10 @@ export default function Step1Input({ onNext, setTargetUrl, setSiteId, setSourceT
         {!submitting && <small>HTML, CSS, JavaScript & media / up to 100 MB</small>}
         {submitting && <div className="zip-upload-progress" role="status"><span>{progress < 100 ? 'Uploading ' + progress + '%' : 'Verifying static website...'}</span><progress max={100} value={progress} aria-label="ZIP upload progress" /></div>}
       </div>}
-      {error && <p className="notice-box error" role="alert">{error}</p>}
+      {reuseArchive && <p>{initialUrl}</p>}
+      {error && <p className="notice-box error" role="alert">{error}{mode === 'URL' && valid && verified !== url && <button type="button" className="btn btn-ghost btn-sm" disabled={checking} onClick={() => setVerificationAttempt(value => value + 1)}>Retry verification</button>}</p>}
       </div><ConversionVisual /></div>
-    </section><div className="step-actions"><button className="btn btn-primary" disabled={submitting || (mode === 'ZIP' ? !file : !valid || verified !== url || checking)}>
+    </section><div className="step-actions"><button className="btn btn-primary" disabled={submitting || (mode === 'ZIP' ? !file && !reuseArchive : !valid || verified !== url || checking)}>
       {submitting ? mode === 'ZIP' ? 'Uploading website...' : 'Creating project...' : 'Continue to settings'}{submitting ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}</button></div>
   </form>;
 }

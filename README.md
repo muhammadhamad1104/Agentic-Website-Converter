@@ -51,6 +51,26 @@ role-aware dashboards, Stripe checkout, and emailed password recovery.
 | Pro | Unlimited conversions, $199 USD one-time |
 | Administrator | Unlimited access and platform administration |
 
+### Conversion Recovery
+
+The seven-step wizard keeps the saved conversion in its URL so a reload can resume
+the current stage. Launch, inference and approval requests are idempotent; retries
+reuse the worker job rather than starting another capture. Interrupted stages show
+**Resume conversion**, while generated files remain exportable with honest warnings
+when source or runtime validation is incomplete.
+
+Schema inference sends compact content evidence, not animation geometry or scripts.
+Original captures and assets are untouched. Identical pages and shared sections are
+referenced once; every distinct page fragment is analyzed. Evidence batches are
+parts of the captured source, not failed attempts. Two requests run concurrently by
+default, and validated per-job results are cached privately for retries.
+
+Configure `LLM_SCHEMA_CONCURRENCY` (1-4, default 2), `LLM_SCHEMA_BATCH_CHARS`
+(1000-48000, default 12000), and `LLM_REQUEST_TIMEOUT_SECONDS` (5-300, default 60)
+in the root `.env`, then recreate the worker. Failed providers receive a short
+cooldown rather than being retried on every fragment. Provider latency, quotas and
+source availability can still affect conversion time and completeness.
+
 ## Architecture
 
 ```text

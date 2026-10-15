@@ -1,6 +1,13 @@
 // ── Job / Conversion Types ───────────────────────────────────
 export type JobStatus =
   | 'DRAFT'
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'CRAWLED'
+  | 'INFERRING_SCHEMA'
+  | 'AWAITING_APPROVAL'
+  | 'COMPLETED'
+  | 'READY'
   | 'CRAWLING'
   | 'EXTRACTING'
   | 'INFERRING'
@@ -72,6 +79,8 @@ export interface ConversionJob {
   id: string;
   siteId?: string;
   inputUrl?: string;
+  startUrl?: string;
+  site?: { sourceUrl?: string; sourceType?: 'URL' | 'ZIP' };
   htmlPages?: string[];
   status: JobStatus;
   crawlConfig?: CrawlConfig;
@@ -105,6 +114,13 @@ export interface ExportManifest {
 
 export interface CreateJobPayload {
   siteId?: string;
+  url?: string;
+  crawlDepth?: number;
+  fullSite?: boolean;
+  maxPages?: number;
+  maxAssets?: number;
+  extractImages?: boolean;
+  inferRelations?: boolean;
   input_url?: string;
   html_pages?: string[];
   crawl_config?: Partial<CrawlConfig>;

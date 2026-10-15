@@ -20,32 +20,43 @@ interface JobState {
   updateJobLocally: (jobId: string, updates: Partial<ConversionJob>) => void;
 }
 
+const pending = new Map<string, Promise<any>>();
+function singleFlight<T>(key: string, action: () => Promise<T>): Promise<T> {
+  const existing = pending.get(key);
+  if (existing) return existing;
+  const request = Promise.resolve().then(action).finally(() => { pending.delete(key); });
+  pending.set(key, request);
+  return request;
+}
+
 export const useJobStore = create<JobState>()(
   devtools(
-    (set) => ({
+    (set, get) => ({
       jobs: {},
       currentJobId: null,
       isLoading: false,
 
-      createJob: async (payload) => {
+      createJob: (payload) => singleFlight('create:' + JSON.stringify(payload), async () => {
         set({ isLoading: true });
         try {
           const { data } = await api.post('/jobs', payload);
           const job: ConversionJob = data.job;
+          if (!job?.id) throw new Error('Job ID was not returned.');
           set((state) => ({
             jobs: { ...state.jobs, [job.id]: job },
             currentJobId: job.id,
             isLoading: false,
           }));
-          toast.success('Conversion job created! 🤖');
+          toast.success('Conversion job created.');
           return job;
         } catch (err) {
           set({ isLoading: false });
           throw err;
         }
-      },
+      }),
 
-      runJob: async (jobId) => {
+      runJob: (jobId) => singleFlight('mutation:' + jobId, async () => {
+        await pending.get('read:' + jobId)?.catch(() => {});
         set({ isLoading: true });
         try {
           const { data } = await api.post(`/jobs/${jobId}/run`);
@@ -60,9 +71,14 @@ export const useJobStore = create<JobState>()(
           set({ isLoading: false });
           throw err;
         }
-      },
+      }),
 
-      inferSchema: async (jobId) => {
+      inferSchema: (jobId) => singleFlight('mutation:' + jobId, async () => {
+        const job = await get().getJob(jobId);
+        const status = String(job.workerJob?.status || '').toLowerCase();
+        if (['inferring_schema', 'awaiting_approval', 'schema_proposed', 'approved', 'generating', 'generated', 'validated', 'completed', 'ready'].includes(status) ||
+          ['INFERRING_SCHEMA', 'AWAITING_APPROVAL', 'GENERATING', 'COMPLETED', 'READY', 'DONE'].includes(job.status)) return;
+        if (!['crawled', 'extracted'].includes(status)) throw new Error('The worker must finish capture before schema analysis.');
         try {
           const { data } = await api.post(`/jobs/${jobId}/infer-schema`);
           set((state) => ({
@@ -71,17 +87,17 @@ export const useJobStore = create<JobState>()(
               [jobId]: { ...state.jobs[jobId], ...data.job },
             },
           }));
-          toast.success('Analyzing website structure & inferring schema...');
+          toast.success('Schema analysis started.');
         } catch (err) {
-          toast.error('Failed to trigger schema inference');
           throw err;
         }
-      },
+      }),
 
-      getJob: async (jobId) => {
+      getJob: (jobId) => singleFlight('read:' + jobId, async () => {
         try {
           const { data } = await api.get(`/jobs/${jobId}`);
           const job: ConversionJob = data.job;
+          if (!job?.id) throw new Error('Conversion status was not returned.');
           set((state) => ({
             jobs: { ...state.jobs, [jobId]: job },
           }));
@@ -89,9 +105,16 @@ export const useJobStore = create<JobState>()(
         } catch (err) {
           throw err;
         }
-      },
+      }),
 
-      submitSchemaDecision: async (jobId, decision, feedback) => {
+      submitSchemaDecision: (jobId, decision, feedback) => singleFlight('mutation:' + jobId, async () => {
+        const job = await get().getJob(jobId);
+        const status = String(job.workerJob?.status || '').toLowerCase();
+        if (job.workerJob?.schema_decision === 'approved' || ['approved', 'generating', 'generated', 'validated', 'completed', 'ready'].includes(status)) {
+          if (decision === 'approved') return;
+          throw new Error('The schema was already approved. Reload the conversion.');
+        }
+        if (!['awaiting_approval', 'schema_proposed'].includes(status)) throw new Error('The schema is no longer awaiting review. Reload the conversion.');
         try {
           const { data } = await api.post(`/jobs/${jobId}/schema-decision`, { decision, feedback });
           set((state) => ({
@@ -102,13 +125,13 @@ export const useJobStore = create<JobState>()(
           }));
           toast.success(
             decision === 'approved'
-              ? '✅ Schema approved! Generating code...'
-              : '🔄 Schema rejected. Re-analyzing...',
+              ? 'Schema approved. Generation started.'
+              : 'Schema revision requested.',
           );
         } catch (err) {
           throw err;
         }
-      },
+      }),
 
       exportJob: async (jobId) => {
         try {

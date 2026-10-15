@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowUpRight, Check, FileCode2, Globe2, GitBranch, Settings2, ScanLine, PackageCheck, FolderDown } from 'lucide-react';
 import { Workspace } from '../../components/Workspace/Workspace';
 import Step1Input from './steps/Step1Input';
@@ -9,6 +9,8 @@ import Step4Schema from './steps/Step4Schema';
 import Step5Approve from './steps/Step5Approve';
 import Step6Generate from './steps/Step6Generate';
 import Step7Export from './steps/Step7Export';
+import { useJobStore } from '../../../store/jobStore';
+import { resumeStep } from './workflow';
 import './Wizard.css';
 
 const steps = [
@@ -27,6 +29,29 @@ export default function Wizard() {
   const [targetUrl, setTargetUrl] = useState('');
   const [sourceType, setSourceType] = useState<'URL' | 'ZIP'>('URL');
   const [siteId, setSiteId] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const resumeId = searchParams.get('job');
+  const [resumeError, setResumeError] = useState('');
+  const [revision, setRevision] = useState(0);
+  const { getJob, setCurrentJob } = useJobStore();
+  const restoring = !!resumeId && resumeId !== jobId;
+  useEffect(() => {
+    if (!restoring || !resumeId) return;
+    let active = true;
+    setResumeError('');
+    getJob(resumeId).then(job => {
+      if (!active) return;
+      setJobId(job.id); setCurrentJob(job.id);
+      setTargetUrl(job.site?.sourceUrl || job.startUrl || job.inputUrl || '');
+      setSiteId(job.siteId || null); setSourceType(job.site?.sourceType || 'URL');
+      setCurrentStep(resumeStep(job));
+    }).catch(() => { if (active) setResumeError('Unable to resume this conversion.'); });
+    return () => { active = false; };
+  }, [resumeId, restoring, getJob, setCurrentJob, revision]);
+  const selectJob = (id: string) => {
+    setJobId(id); setCurrentJob(id);
+    setSearchParams(params => { params.set('job', id); return params; }, { replace: true });
+  };
   const stage = useRef<HTMLDivElement>(null);
   const rail = useRef<HTMLOListElement>(null);
   const previous = useRef(currentStep);
@@ -43,8 +68,8 @@ export default function Wizard() {
   const back = () => setCurrentStep(step => Math.max(1, step - 1));
   const content = () => {
     switch (currentStep) {
-      case 1: return <Step1Input onNext={next} setJobId={setJobId} setTargetUrl={setTargetUrl} setSiteId={setSiteId} setSourceType={setSourceType} />;
-      case 2: return <Step2Config onNext={next} onBack={back} setJobId={setJobId} targetUrl={targetUrl} siteId={siteId} sourceType={sourceType} />;
+      case 1: return <Step1Input onNext={next} setJobId={selectJob} setTargetUrl={setTargetUrl} setSiteId={setSiteId} setSourceType={setSourceType} initialUrl={targetUrl} initialSiteId={siteId} initialSourceType={sourceType} />;
+      case 2: return <Step2Config onNext={next} onBack={back} setJobId={selectJob} targetUrl={targetUrl} siteId={siteId} sourceType={sourceType} />;
       case 3: return <Step3Crawl onNext={next} jobId={jobId} />;
       case 4: return <Step4Schema onNext={next} jobId={jobId} />;
       case 5: return <Step5Approve onNext={next} onBack={back} jobId={jobId} />;
@@ -72,8 +97,8 @@ export default function Wizard() {
         </li>;
       })}
     </ol></nav>
-    <div key={currentStep} className="conversion-stage" ref={stage} tabIndex={-1} aria-label={'Stage ' + currentStep + ': ' + steps[currentStep - 1].title}>
-      {content()}
+    <div key={jobId + ':' + currentStep} className="conversion-stage" ref={stage} tabIndex={-1} aria-label={'Stage ' + currentStep + ': ' + steps[currentStep - 1].title}>
+      {restoring ? <p role={resumeError ? 'alert' : 'status'}>{resumeError || 'Restoring conversion...'}{resumeError && <button type="button" className="btn btn-secondary" onClick={() => setRevision(value => value + 1)}>Retry</button>}</p> : content()}
     </div>
   </div></Workspace>;
 }

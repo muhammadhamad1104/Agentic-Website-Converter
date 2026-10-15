@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Loader2, ShieldCheck } from 'lucide-react';
 import { LoadError } from '../../../components/Workspace/Workspace';
-import api from '../../../../services/api';
+import { useJobStore } from '../../../../store/jobStore';
 import { useResource, type AccountSummary } from '../../../../hooks/useResource';
 import { Link } from 'react-router-dom';
 
@@ -16,19 +16,22 @@ export default function Step2Config({ onNext, onBack, setJobId, targetUrl, siteI
 }) {
   const [level, setLevel] = useState(2);
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const [error, setError] = useState('');
   const account = useResource<AccountSummary>('/account/summary');
+  const { createJob } = useJobStore();
   const archive = sourceType === 'ZIP';
   const selected = archive ? options[2] : options[level];
   const start = async () => {
+    if (submitting.current || !targetUrl || (archive && !siteId) || !account.data?.plan.canConvert) return;
+    submitting.current = true;
     setBusy(true); setError('');
     try {
-      const result = await api.post('/jobs', { siteId, ...(archive ? {} : { url: targetUrl }), crawlDepth: selected.depth,
+      const job = await createJob({ siteId: siteId || undefined, ...(archive ? {} : { url: targetUrl }), crawlDepth: selected.depth,
         fullSite: selected.pages === 0, maxPages: selected.pages, maxAssets: 0, extractImages: true, inferRelations: true });
-      if (!result.data.job?.id) throw new Error('Job ID was not returned.');
-      setJobId(result.data.job.id); onNext();
+      setJobId(job.id); onNext();
     } catch (problem: any) { setError(problem.response?.data?.error || problem.message || 'Unable to start conversion.'); }
-    finally { setBusy(false); }
+    finally { submitting.current = false; setBusy(false); }
   };
   return <>
     <section className="step-content"><div className="conversion-settings"><div>
@@ -40,5 +43,5 @@ export default function Step2Config({ onNext, onBack, setJobId, targetUrl, siteI
       {error && <p className="notice-box error" role="alert">{error}</p>}
       </div><div className="capture-manifest"><h3>Capture manifest</h3><dl className="detail-list"><div><dt>{archive ? 'HTML pages' : 'Page limit'}</dt><dd>{archive ? 'All included' : selected.pages || 'No cap'}</dd></div><div><dt>{archive ? 'Source' : 'Link depth'}</dt><dd>{archive ? 'Uploaded ZIP' : selected.pages ? selected.depth : 'All discoverable pages'}</dd></div><div><dt>Images & media</dt><dd>Included</dd></div><div><dt>{archive ? 'Folders' : 'Asset limit'}</dt><dd>{archive ? 'Preserved' : 'No cap'}</dd></div></dl></div></div>
     </section><div className="step-actions"><button className="btn btn-secondary" disabled={busy} onClick={onBack}><ArrowLeft size={16} />Back</button>
-      <button className="btn btn-primary" disabled={busy || !targetUrl || !account.data?.plan.canConvert} onClick={start}>{busy ? <Loader2 className="animate-spin" size={16} /> : <ArrowRight size={16} />}{busy ? 'Starting...' : 'Start conversion'}</button></div></>;
+      <button className="btn btn-primary" disabled={busy || !targetUrl || (archive && !siteId) || !account.data?.plan.canConvert} onClick={start}>{busy ? <Loader2 className="animate-spin" size={16} /> : <ArrowRight size={16} />}{busy ? 'Starting...' : 'Start conversion'}</button></div></>;
 }

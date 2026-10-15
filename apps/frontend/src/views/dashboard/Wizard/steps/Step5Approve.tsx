@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, CheckCircle, ChevronDown, Code2, Copy, Database, Loader2, RefreshCw, Table, XCircle } from 'lucide-react';
 import { useJobStore } from '../../../../store/jobStore';
 import toast from 'react-hot-toast';
+import { entitiesOf, generationStarted, jobFailed, schemaOf, schemaReady } from '../workflow';
 
 function fieldsOf(entity: any): any[] {
   if (Array.isArray(entity.fields)) return entity.fields;
@@ -24,36 +25,41 @@ export default function Step5Approve({ onNext, onBack, jobId }: {
   const [view, setView] = useState<'table' | 'json'>('table');
   const [revision, setRevision] = useState(0);
   const [copied, setCopied] = useState(false);
+  const submitting = useRef(false);
+  const [alreadyApproved, setAlreadyApproved] = useState(false);
   useEffect(() => {
     let active = true;
-    setSchema(null); setError('');
+    setSchema(null); setError(''); setAlreadyApproved(false); setCopied(false);
     if (!jobId) { setError('No active conversion found.'); return; }
     getJob(jobId).then((job: any) => {
       if (active) {
-        const proposal = job?.workerJob?.schema_proposal;
-        if (proposal) setSchema(proposal);
-        else setError('The worker has not returned a schema for review.');
+        if (!jobFailed(job) && generationStarted(job)) { setAlreadyApproved(true); return; }
+        const proposal = schemaOf(job);
+        if (schemaReady(job)) setSchema(proposal);
+        else setError('No completed schema is available for review.');
       }
     }).catch(() => { if (active) setError('Unable to load the schema.'); });
     return () => { active = false; };
   }, [jobId, getJob, revision]);
-  const entities: any[] = schema?.entities || schema?.models || [];
+  const entities = entitiesOf(schema);
   const fieldCount = entities.reduce((total, entity) => total + fieldsOf(entity).length, 0);
   const decide = async (decision: 'approved' | 'rejected') => {
-    if (!jobId || !schema || busy) return;
+    if (!jobId || !schema || submitting.current) return;
+    submitting.current = true;
     setBusy(decision);
     try {
       await submitSchemaDecision(jobId, decision, decision === 'rejected'
         ? { previous_schema: schema, feedback_text: feedback } : undefined);
       if (decision === 'approved') onNext(); else onBack();
     } catch (problem: any) {
-      toast.error(problem.response?.data?.error || 'Unable to submit your decision. Please try again.');
-    } finally { setBusy(null); }
+      setError(problem.response?.data?.error || 'Unable to confirm your decision. Reload the schema before retrying.');
+    } finally { submitting.current = false; setBusy(null); }
   };
   return <>
     <section className="step-content">
       {error && <div className="notice-box error" role="alert">{error}<button type="button" className="btn btn-ghost btn-sm" onClick={() => setRevision(value => value + 1)}><RefreshCw size={13} />Reload schema</button></div>}
-      {!schema && !error && <p className="step-loading" role="status"><Loader2 size={16} className="animate-spin" />Loading schema...</p>}
+      {!schema && !error && !alreadyApproved && <p className="step-loading" role="status"><Loader2 size={16} className="animate-spin" />Loading schema...</p>}
+      {alreadyApproved && <p role="status">Schema already approved.</p>}
       {schema && <>
         <div className="schema-review-toolbar"><div><h3>{entities.length} content models</h3><p>{fieldCount} fields</p></div><div className="schema-view-controls">
           <div className="schema-view-toggle" role="group" aria-label="Schema display">
@@ -89,9 +95,9 @@ export default function Step5Approve({ onNext, onBack, jobId }: {
         </div>
       </>}
     </section>
-    <div className="step-actions"><button type="button" className="btn btn-secondary" onClick={() => decide('rejected')} disabled={!schema || !!busy}>
+    <div className="step-actions"><button type="button" className="btn btn-secondary" onClick={() => decide('rejected')} disabled={!schema || !!busy || !!error}>
       {busy === 'rejected' ? <Loader2 size={16} className="animate-spin" /> : <XCircle size={16} />}Request revision</button>
-      <button type="button" className="btn btn-primary" onClick={() => decide('approved')} disabled={!schema || !!busy}>
-        {busy === 'approved' ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}Approve and generate</button></div>
+      <button type="button" className="btn btn-primary" onClick={() => alreadyApproved ? onNext() : decide('approved')} disabled={(!schema && !alreadyApproved) || !!busy || !!error}>
+        {busy === 'approved' ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle size={16} />}{alreadyApproved ? 'Continue to generation' : 'Approve and generate'}</button></div>
   </>;
 }

@@ -26,7 +26,7 @@ export default function ProgressPanel({ status, elapsed, metrics, logs }: {
     setCopied(false);
   }, [logs.length, following]);
   const running = status === 'running';
-  const warning = status === 'failed' || status === 'warnings';
+  const warning = status === 'failed' || status === 'warnings' || status === 'paused';
   const StatusIcon = running ? Loader2 : warning ? TriangleAlert : CheckCircle2;
   return <section className="step-content">
     <div style={{ '--metrics': metrics.length + 1 } as CSSProperties}><Metrics items={[...metrics.map(metric => ({
