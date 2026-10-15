@@ -1,0 +1,283 @@
+{
+  "nodes": [
+    "__start__",
+    "crawl_site",
+    "sitemap_gate",
+    "extract_content",
+    "infer_candidates",
+    "infer_schema",
+    "schema_review_gate",
+    "mint_schema_version",
+    "generation_gate",
+    "prepare_template_scaffold",
+    "generate_backend",
+    "generate_frontend",
+    "generate_admin",
+    "validate_consistency",
+    "validate_build_smoke",
+    "validation_review_gate",
+    "package_export",
+    "END_CANCELLED",
+    "__end__"
+  ],
+  "edges": [
+    {
+      "source": "__start__",
+      "target": "crawl_site",
+      "conditional": false,
+      "label": null
+    },
+    {
+      "source": "crawl_site",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "crawl_site",
+      "target": "mint_schema_version",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "crawl_site",
+      "target": "prepare_template_scaffold",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "crawl_site",
+      "target": "sitemap_gate",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "extract_content",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "extract_content",
+      "target": "__end__",
+      "conditional": true,
+      "label": "END"
+    },
+    {
+      "source": "extract_content",
+      "target": "infer_candidates",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "generate_admin",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "generate_admin",
+      "target": "generate_admin",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "generate_admin",
+      "target": "validate_consistency",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "generate_backend",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "generate_backend",
+      "target": "generate_backend",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "generate_backend",
+      "target": "generate_frontend",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "generate_frontend",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "generate_frontend",
+      "target": "generate_admin",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "generate_frontend",
+      "target": "generate_frontend",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "generation_gate",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "generation_gate",
+      "target": "prepare_template_scaffold",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "infer_candidates",
+      "target": "infer_schema",
+      "conditional": false,
+      "label": null
+    },
+    {
+      "source": "infer_schema",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "infer_schema",
+      "target": "schema_review_gate",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "mint_schema_version",
+      "target": "generation_gate",
+      "conditional": false,
+      "label": null
+    },
+    {
+      "source": "prepare_template_scaffold",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "prepare_template_scaffold",
+      "target": "generate_backend",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "schema_review_gate",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "schema_review_gate",
+      "target": "__end__",
+      "conditional": true,
+      "label": "END"
+    },
+    {
+      "source": "schema_review_gate",
+      "target": "infer_schema",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "schema_review_gate",
+      "target": "mint_schema_version",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "sitemap_gate",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "sitemap_gate",
+      "target": "crawl_site",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "sitemap_gate",
+      "target": "extract_content",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "validate_build_smoke",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "validate_build_smoke",
+      "target": "validation_review_gate",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "validate_consistency",
+      "target": "validate_build_smoke",
+      "conditional": false,
+      "label": null
+    },
+    {
+      "source": "validation_review_gate",
+      "target": "END_CANCELLED",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "validation_review_gate",
+      "target": "generate_admin",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "validation_review_gate",
+      "target": "generate_backend",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "validation_review_gate",
+      "target": "generate_frontend",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "validation_review_gate",
+      "target": "infer_schema",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "validation_review_gate",
+      "target": "package_export",
+      "conditional": true,
+      "label": null
+    },
+    {
+      "source": "END_CANCELLED",
+      "target": "__end__",
+      "conditional": false,
+      "label": null
+    },
+    {
+      "source": "package_export",
+      "target": "__end__",
+      "conditional": false,
+      "label": null
+    }
+  ]
+}
