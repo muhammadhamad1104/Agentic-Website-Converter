@@ -99,6 +99,26 @@ Browser / React + Vite + Three.js
 | `docs` | Handover guide and implementation notes |
 | `infra` | Optional cloud/infrastructure templates, not the local demo deployment |
 
+### Workflow Diagrams
+
+Use the [widescreen PNG](docs/assets/langgraph/langgraph-ppt.png) for presentation
+slides and the [full LangGraph PNG](docs/assets/langgraph/langgraph-full.png) for
+technical discussion. A [scalable SVG](docs/assets/langgraph/langgraph-ppt.svg),
+PDF, editable Mermaid source, and compiled graph data are included in
+[`docs/assets/langgraph`](docs/assets/langgraph/README.md).
+
+The [Python exporter](scripts/export-langgraph.py) builds the actual compiled graph
+without running a conversion. Regenerate it in a Python environment with the worker
+dependencies and matplotlib installed:
+
+```bash
+python scripts/export-langgraph.py
+```
+
+Add `--native-png` to render the complete graph through Mermaid.ink; this optional
+renderer requires internet access. Diagram generation does not change deployment
+data or call an LLM.
+
 ## Quick Start
 
 Use Docker Compose for the supported demonstration setup. Node.js 22+ is required
@@ -151,6 +171,24 @@ This is the **platform admin**, separate from each converted application's `/adm
 
 Published images and student-domain/hosting options are documented in the
 [containers and hosting guide](docs/hosting.md).
+
+**One-command laptop startup (Linux with Docker Desktop):** after completing the
+first-installation steps above, run this from the project folder with the
+`desktop-linux` Docker context selected:
+
+```bash
+systemctl --user start docker-desktop && until docker info >/dev/null 2>&1; do sleep 2; done && docker compose --profile demo up -d --build --wait
+```
+
+This starts Docker Desktop, waits for its engine, rebuilds changed frontend,
+backend and worker image layers, and starts the complete local stack: PostgreSQL,
+Redis, the API, Python worker, frontend, Stripe webhook listener, and Mailpit inbox.
+It waits for configured health checks before returning. Open
+[localhost:5173](http://localhost:5173) afterward. Existing database volumes,
+accounts and conversions are preserved; this command does not reset data.
+It does not install Docker, create credentials, or replace the first database
+initialization. Internet is needed for uncached builds, LLMs and external services.
+If Docker Desktop cannot start, fix that error rather than waiting for the engine.
 
 On an already configured machine, open Docker Desktop, select **Containers**, and
 press **Start** on the complete **agentic-converter** group. Open
