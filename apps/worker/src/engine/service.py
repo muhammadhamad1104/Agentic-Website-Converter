@@ -43,9 +43,18 @@ class ConversionEngine:
         self._llm = self._build_failover_llm()
         self.workflow = build_conversion_workflow(
             infer_node=lambda state: infer_schema_node(state, llm=self._llm,
-                progress=lambda event: self._save_schema_progress(state["job_id"], event)),
+                progress=lambda event: self._save_schema_progress(state["job_id"], event),
+                cache_dir=self._schema_cache_dir(state["job_id"])),
             llm=self._llm,
         )
+
+    def _schema_cache_dir(self, job_id):
+        if not isinstance(self.store, SqliteJobStore):
+            return None
+        # Job identifiers must never escape the private per-job cache directory.
+        from uuid import UUID
+        safe_id = str(UUID(str(job_id)))
+        return Path(settings.JOB_STORE_PATH).parent / "schema-cache" / safe_id
 
     @traced("engine.build_failover_llm")
     def _build_failover_llm(self) -> FailoverLLM:
@@ -233,6 +242,8 @@ class ConversionEngine:
         config["render_js"] = bool(config["render_js"])
         config["render_wait_seconds"] = max(0, int(config["render_wait_seconds"] or 0))
         config["render_headless"] = bool(config["render_headless"])
+        if incoming.get("_request_key"):
+            config["_request_key"] = incoming["_request_key"]
         return config
 
     def _resolve_downloads_dir(self) -> Path | None:

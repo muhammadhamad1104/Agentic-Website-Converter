@@ -17,9 +17,9 @@ def test_evidence_progress_covers_every_page_and_keeps_merged_counts():
     result = infer_all_pages(["<p>" + "x" * 13000 + "</p>", "<p>second page</p>"],
                              llm, lambda pages: pages[0], json.loads, events.append)
     assert json.loads(result)["entities"]
-    assert events[-1]["completed_batches"] == events[-1]["total_batches"] == 3
+    assert events[-1]["completed_batches"] == events[-1]["total_batches"] == 2
     assert events[-1]["entity_count"] == events[-1]["field_count"] == 1
-    assert {event["page_number"] for event in events} == {1, 2}
+    assert {page for event in events for page in event["source_pages"]} == {1, 2}
 
 
 def test_inference_progress_is_persisted_before_the_model_returns():

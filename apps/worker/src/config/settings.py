@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     DEFAULT_LLM_MODEL: str = "gpt-4o-mini"
     LLM_MAX_OUTPUT_TOKENS: int = 8192
     LLM_REQUEST_TIMEOUT_SECONDS: float = 60
+    LLM_SCHEMA_CONCURRENCY: int = 2
+    LLM_SCHEMA_BATCH_CHARS: int = 12000
     
     # Database
     DATABASE_URL: str = ""
@@ -197,6 +199,10 @@ class Settings(BaseSettings):
     def _validate_quality_and_runtime_settings(self) -> "Settings":
         if not 5 <= self.LLM_REQUEST_TIMEOUT_SECONDS <= 300:
             raise ValueError("LLM_REQUEST_TIMEOUT_SECONDS must be between 5 and 300")
+        if not 1 <= self.LLM_SCHEMA_CONCURRENCY <= 4:
+            raise ValueError("LLM_SCHEMA_CONCURRENCY must be between 1 and 4")
+        if not 1000 <= self.LLM_SCHEMA_BATCH_CHARS <= 48000:
+            raise ValueError("LLM_SCHEMA_BATCH_CHARS must be between 1000 and 48000")
         profile = str(self.QUALITY_PROFILE or "").strip().lower()
         if profile not in self._quality_profile_matrix():
             raise ValueError("QUALITY_PROFILE must be one of: dev, staging, prod")

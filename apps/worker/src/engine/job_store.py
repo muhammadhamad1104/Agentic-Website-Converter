@@ -165,6 +165,11 @@ class InMemoryJobStore:
             job = self._jobs.get(job_id)
             return deepcopy(job) if job is not None else None
 
+    def find_job_by_request_key(self, request_key: str) -> ConversionJob | None:
+        with self._lock:
+            return next((deepcopy(job) for job in self._jobs.values()
+                         if job.crawl_config.get("_request_key") == request_key), None)
+
     def save_job(self, job: ConversionJob) -> None:
         job.updated_at_ms = time.time() * 1000
         with self._lock:
@@ -392,6 +397,13 @@ class SqliteJobStore:
         if row is None:
             return None
         return self._row_to_job(row)
+
+    def find_job_by_request_key(self, request_key: str) -> ConversionJob | None:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute("SELECT * FROM conversion_jobs WHERE json_extract(crawl_config, '$._request_key') = ? LIMIT 1",
+                                   (request_key,)).fetchone()
+        return self._row_to_job(row) if row is not None else None
 
     def save_job(self, job: ConversionJob) -> None:
         with self._lock:

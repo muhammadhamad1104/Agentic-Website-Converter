@@ -60,3 +60,24 @@ def test_provider_failures_are_visible_without_leaking_error_bodies():
     assert "secret-from-provider" not in str(error.value)
     assert all("secret-from-provider" not in event["message"] for event in events)
     assert any("timed out" in event["message"] for event in events)
+
+
+def test_cooldown_skips_recently_failed_providers_and_recovers(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("src.engine.failover_llm.monotonic", lambda: clock[0])
+    calls = []
+    class Model:
+        def invoke(self, prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                raise TimeoutError("private")
+            return "recovered"
+    import pytest
+    llm = FailoverLLM(models=[Model()])
+    with pytest.raises(RuntimeError, match="All LLM providers failed"):
+        llm.invoke("first")
+    with pytest.raises(RuntimeError, match="temporarily unavailable"):
+        llm.invoke("second")
+    assert len(calls) == 1
+    clock[0] += 31
+    assert llm.invoke("third") == "recovered"

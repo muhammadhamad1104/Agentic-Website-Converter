@@ -229,8 +229,9 @@ def test_all_pages_and_late_evidence_are_sent_to_inference():
             prompts.append(prompt)
             return json.dumps({"entities": [{"name": "Service", "fields": [{"name": "title", "type": "string"}]}]})
     infer_all_pages(["<p>" + "x" * 25000 + "LAST_MARKER</p>"] * 4, LLM(), lambda pages: "\n".join(pages), json.loads)
-    assert sum("LAST_MARKER" in prompt for prompt in prompts) == 4
-    assert len(prompts) == 12
+    assert sum("LAST_MARKER" in prompt for prompt in prompts) == 1
+    assert len(prompts) == 3
+    assert all("Source pages 1, 2, 3, 4" in prompt for prompt in prompts)
 
 
 def test_smoke_and_review_do_not_override_a_failed_build():
