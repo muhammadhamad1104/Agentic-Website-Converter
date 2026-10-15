@@ -27,7 +27,13 @@ test('maps separate cloud secrets and exact image tags without exporting local/m
   assert.equal(remote.CLOUD_SSH_PRIVATE_KEY_B64, undefined);
   assert.equal(remote.STRIPE_WEBHOOK_SECRET, values.CLOUD_STRIPE_WEBHOOK_SECRET);
   assert.equal(remote.TRUST_PROXY, 'uniquelocal');
+  assert.equal(remote.LANGSMITH_TRACING, 'false');
   assert.equal(values.DB_PASSWORD, 'local-database-must-stay-local');
+});
+
+test('cloud tracing requires explicit opt-in instead of copying local tracing', () => {
+  assert.equal(cloudEnvironment({ ...values, LANGSMITH_TRACING: 'true' }, 'agenticconverter.tech', tag, tag, publicTag).LANGSMITH_TRACING, 'false');
+  assert.equal(cloudEnvironment({ ...values, CLOUD_LANGSMITH_TRACING: 'true' }, 'agenticconverter.tech', tag, tag, publicTag).LANGSMITH_TRACING, 'true');
 });
 
 test('never uses the local Stripe listener secret when a public webhook is not configured', () => {

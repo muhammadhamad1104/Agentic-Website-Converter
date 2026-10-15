@@ -7,7 +7,7 @@ import { updateEnvironment } from './setup-local-services.mjs';
 import { validatePublicEnvironment } from './check-public-env.mjs';
 
 const runtimeKeys = [
-  'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'KIMI_API_KEY', 'KIMI_MODEL', 'DEEPSEEK_API_KEY',
+  'LLM_REQUEST_TIMEOUT_SECONDS', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'KIMI_API_KEY', 'KIMI_MODEL', 'DEEPSEEK_API_KEY',
   'DEEPSEEK_MODEL', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GROQ_API_KEY', 'GROQ_MODEL',
   'OPEN_SOURCE_API_KEY', 'OPEN_SOURCE_MODEL', 'OPEN_SOURCE_BASE_URL', 'LANGSMITH_TRACING',
   'LANGSMITH_ENDPOINT', 'LANGSMITH_API_KEY', 'LANGSMITH_PROJECT', 'STRIPE_SECRET_KEY',
@@ -21,6 +21,7 @@ export function cloudEnvironment(values, domain, backendTag, workerTag, frontend
   }
   const remote = Object.fromEntries(runtimeKeys.filter(key => values[key] !== undefined).map(key => [key, values[key]]));
   Object.assign(remote, {
+    LANGSMITH_TRACING: values.CLOUD_LANGSMITH_TRACING || 'false',
     NODE_ENV: 'production', DB_USER: 'postgres', DB_NAME: 'agentic_converter',
     DB_PASSWORD: values.CLOUD_DB_PASSWORD, JWT_SECRET: values.CLOUD_JWT_SECRET,
     PREVIEW_API_SECRET: values.CLOUD_PREVIEW_API_SECRET, PUBLIC_APP_HOST: domain,

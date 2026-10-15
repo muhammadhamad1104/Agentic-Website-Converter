@@ -127,6 +127,7 @@ services:
       - DATABASE_URL=postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-agentic_converter}
       - REDIS_URL=redis://redis:6379
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_REQUEST_TIMEOUT_SECONDS=${LLM_REQUEST_TIMEOUT_SECONDS:-60}
       - KIMI_API_KEY=${KIMI_API_KEY}
       - KIMI_MODEL=${KIMI_MODEL}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}

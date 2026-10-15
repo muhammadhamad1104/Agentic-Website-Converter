@@ -6,6 +6,12 @@ from pydantic import ValidationError
 from src.config.settings import Settings
 
 
+@pytest.mark.parametrize("timeout", [0, 4, 301])
+def test_settings_reject_unbounded_provider_timeout(timeout):
+    with pytest.raises(ValidationError, match="LLM_REQUEST_TIMEOUT_SECONDS"):
+        Settings(_env_file=None, LLM_REQUEST_TIMEOUT_SECONDS=timeout)
+
+
 def test_settings_reject_invalid_quality_profile() -> None:
     with pytest.raises(ValidationError, match="QUALITY_PROFILE"):
         Settings(_env_file=None, QUALITY_PROFILE="qa")

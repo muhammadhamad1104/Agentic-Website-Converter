@@ -97,6 +97,12 @@ Private `.env` files and tooling directories are excluded from capture.
 - Every captured page is included in batched schema inference. The
   `LLM_MAX_OUTPUT_TOKENS` setting limits each provider response, not the total
   conversion budget. Provider quotas, context windows and request failures still apply.
+- Provider requests use `LLM_REQUEST_TIMEOUT_SECONDS` (60 seconds by default),
+  bounded SDK retries, and reuse a successful provider for later evidence batches.
+  Batch/provider progress and partial model/field counts are persisted while
+  inference runs. Unavailable models and provider failures are reported rather
+  than leaving an indefinite silent spinner. Confirm model IDs against each
+  provider's current catalog; environment values override code defaults.
 - Generated admin supports page content/link/media edits, publishing,
   duplication/deletion, media uploads, and typed collection CRUD.
   The source-preserving runtime uses a reusable responsive CMS template with

@@ -7,6 +7,7 @@ export default function Step4Schema({ onNext, jobId }: { onNext: () => void, job
   const [status, setStatus] = useState<'running' | 'complete' | 'failed'>('running');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [entities, setEntities] = useState<any[]>([]);
+  const [progress, setProgress] = useState<{ completed_batches?: number; total_batches?: number; entity_count?: number; field_count?: number }>({});
   const [logs, setLogs] = useState<Array<{ timestamp: string; level: 'info' | 'success' | 'warn' | 'node'; text: string }>>([
     { timestamp: new Date().toLocaleTimeString(), level: 'info', text: 'Initializing LangGraph Conversion Workflow & Schema Inference Engine...' }
   ]);
@@ -51,11 +52,13 @@ export default function Step4Schema({ onNext, jobId }: { onNext: () => void, job
 
     const globalSeenTexts = new Set<string>();
     let schemaFinished = false;
+    let polling = false;
 
     const SCHEMA_NODES = new Set(['extract_content', 'infer_candidates', 'infer_schema', 'schema_review_gate', 'engine.infer_schema_stage']);
 
     const poll = async () => {
-      if (schemaFinished || !isMounted) return;
+      if (schemaFinished || !isMounted || polling) return;
+      polling = true;
 
       try {
         const job = await getJob(jobId);
@@ -68,9 +71,12 @@ export default function Step4Schema({ onNext, jobId }: { onNext: () => void, job
         const foundEntities: any[] = schema.entities || schema.models || [];
         const traces: any[] = workerJob?.trace_events || [];
         const workerErrors: string[] = workerJob?.errors || [];
+        if (workerJob?.schema_quality_report?.inference_progress)
+          setProgress(workerJob.schema_quality_report.inference_progress);
 
         // 1. When real entities exist from Python worker
-        if (foundEntities.length > 0 && workerJob?.schema_decision !== 'rejected' && crawlStatus !== 'INFERRING_SCHEMA') {
+        const schemaReady = ['awaiting_approval', 'schema_proposed', 'approved', 'generated', 'validated', 'completed', 'ready'].includes(workerStatus);
+        if (foundEntities.length > 0 && schemaReady && workerJob?.schema_decision !== 'rejected') {
           setEntities(foundEntities);
           setStatus('complete');
           schemaFinished = true;
@@ -122,7 +128,7 @@ export default function Step4Schema({ onNext, jobId }: { onNext: () => void, job
         }
 
         // 4. Update status and progress — detect failures from both crawl status and worker status
-        if (workerStatus === 'failed' || crawlStatus === 'FAILED') {
+        if (['failed', 'cancelled', 'error'].includes(workerStatus) || crawlStatus === 'FAILED') {
           schemaFinished = true;
           setStatus('failed');
           const errorDetail = workerErrors.length > 0 ? workerErrors[workerErrors.length - 1] : 'Check worker service logs.';
@@ -140,6 +146,8 @@ export default function Step4Schema({ onNext, jobId }: { onNext: () => void, job
         }
       } catch (err) {
         // Network polling error fallback — don't crash the poll loop
+      } finally {
+        polling = false;
       }
     };
 
@@ -167,6 +175,6 @@ export default function Step4Schema({ onNext, jobId }: { onNext: () => void, job
 
 
   return <>
-    <ProgressPanel status={status} elapsed={formatElapsedTime(elapsedSeconds)} logs={logs} metrics={[{ label: 'Content models', value: entities.length }, { label: 'Fields', value: totalFields }]} />
+    <ProgressPanel status={status} elapsed={formatElapsedTime(elapsedSeconds)} logs={logs} metrics={[{ label: 'Content models', value: entities.length || progress.entity_count || 0 }, { label: 'Fields', value: totalFields || progress.field_count || 0 }, { label: 'Evidence batches', value: progress.total_batches ? `${progress.completed_batches || 0} / ${progress.total_batches}` : '--' }]} />
     <div className="step-actions"><button className="btn btn-primary" disabled={status !== 'complete'} onClick={onNext}>Review schema <ArrowRight size={16} /></button></div></>;
 }

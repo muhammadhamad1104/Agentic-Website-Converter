@@ -42,7 +42,8 @@ class ConversionEngine:
                 self.store = InMemoryJobStore()
         self._llm = self._build_failover_llm()
         self.workflow = build_conversion_workflow(
-            infer_node=lambda state: infer_schema_node(state, llm=self._llm),
+            infer_node=lambda state: infer_schema_node(state, llm=self._llm,
+                progress=lambda event: self._save_schema_progress(state["job_id"], event)),
             llm=self._llm,
         )
 
@@ -58,10 +59,13 @@ class ConversionEngine:
                     model=getattr(settings, "KIMI_MODEL", "moonshot-v1-8k"),
                     api_key=settings.KIMI_API_KEY,
                     base_url="https://api.moonshot.ai/v1",
-                    temperature=0.0,
-                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
+                    temperature=None if settings.KIMI_MODEL.startswith('kimi-') else 0.0,
+                    **({'extra_body': {'thinking': {'type': 'disabled'}}}
+                       if settings.KIMI_MODEL == 'kimi-k2.6' else {}),
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+                    timeout=settings.LLM_REQUEST_TIMEOUT_SECONDS, max_retries=0,
                 )
-                models.append(LangChainChatAdapter(kimi))
+                models.append(LangChainChatAdapter(kimi, "Kimi"))
             except Exception:
                 pass
 
@@ -74,9 +78,10 @@ class ConversionEngine:
                     api_key=settings.DEEPSEEK_API_KEY,
                     base_url="https://api.deepseek.com/v1",
                     temperature=0.0,
-                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+                    timeout=settings.LLM_REQUEST_TIMEOUT_SECONDS, max_retries=0,
                 )
-                models.append(LangChainChatAdapter(deepseek))
+                models.append(LangChainChatAdapter(deepseek, "DeepSeek"))
             except Exception:
                 pass
 
@@ -88,9 +93,10 @@ class ConversionEngine:
                     model=getattr(settings, "OPENAI_MODEL", "gpt-4o-mini"), 
                     api_key=settings.OPENAI_API_KEY, 
                     temperature=0.0,
-                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+                    timeout=settings.LLM_REQUEST_TIMEOUT_SECONDS, max_retries=0,
                 )
-                models.append(LangChainChatAdapter(openai))
+                models.append(LangChainChatAdapter(openai, "OpenAI"))
             except Exception:
                 pass
 
@@ -102,9 +108,10 @@ class ConversionEngine:
                     model=getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile"), 
                     api_key=settings.GROQ_API_KEY, 
                     temperature=0.0,
-                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+                    timeout=settings.LLM_REQUEST_TIMEOUT_SECONDS, max_retries=0,
                 )
-                models.append(LangChainChatAdapter(groq))
+                models.append(LangChainChatAdapter(groq, "Groq"))
             except Exception:
                 pass
 
@@ -119,9 +126,10 @@ class ConversionEngine:
                     model=getattr(settings, "GEMINI_MODEL", "gemini-3.6-flash"),
                     google_api_key=settings.GEMINI_API_KEY,
                     temperature=0.0,
-                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+                    timeout=settings.LLM_REQUEST_TIMEOUT_SECONDS, max_retries=1,
                 )
-                models.append(LangChainChatAdapter(gemini))
+                models.append(LangChainChatAdapter(gemini, "Gemini"))
             except Exception:
                 pass
 
@@ -134,9 +142,10 @@ class ConversionEngine:
                     api_key=settings.OPEN_SOURCE_API_KEY,
                     base_url=settings.OPEN_SOURCE_BASE_URL,
                     temperature=0.0,
-                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+                    timeout=settings.LLM_REQUEST_TIMEOUT_SECONDS, max_retries=0,
                 )
-                models.append(LangChainChatAdapter(opensource))
+                models.append(LangChainChatAdapter(opensource, "OpenAI-compatible"))
             except Exception:
                 pass
 
@@ -148,9 +157,10 @@ class ConversionEngine:
                     model="claude-3-5-sonnet-20240620", 
                     api_key=settings.ANTHROPIC_API_KEY, 
                     temperature=0.0,
-                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS
+                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+                    timeout=settings.LLM_REQUEST_TIMEOUT_SECONDS, max_retries=0,
                 )
-                models.append(LangChainChatAdapter(anthropic))
+                models.append(LangChainChatAdapter(anthropic, "Anthropic"))
             except Exception:
                 pass
 
@@ -158,6 +168,28 @@ class ConversionEngine:
             models.append(_UnavailableLLM("No LLM providers available: missing API keys or dependencies"))
 
         return FailoverLLM(models=models)
+
+    def _save_schema_progress(self, job_id: str, event: dict[str, Any]) -> None:
+        job = self.store.get_job(job_id)
+        if job is None:
+            return
+        job.schema_quality_report = {**job.schema_quality_report, "inference_progress": event}
+        job.trace_events.append({"node": "infer_schema", "event_type": "inference_progress",
+            "job_id": job_id, "input_status": "inferring_schema", "output_status": "inferring_schema",
+            "duration_ms": 0, "timestamp_ms": int(time.time() * 1000), "message": event["message"]})
+        self.store.save_job(job)
+
+    def _merge_schema_progress(self, job_id: str, result: dict[str, Any]) -> None:
+        saved = self.store.get_job(job_id)
+        if saved is None:
+            return
+        progress = saved.schema_quality_report.get("inference_progress")
+        if progress:
+            result.setdefault("schema_quality_report", {})["inference_progress"] = progress
+        events = [event for event in saved.trace_events if event.get("event_type") == "inference_progress"]
+        result["trace_events"] = events + [event for event in result.get("trace_events", [])
+                                          if event.get("event_type") != "inference_progress"]
+        result["trace_events"].sort(key=lambda event: event.get("timestamp_ms", 0))
 
     def _default_crawl_config(self) -> dict[str, Any]:
         return {
@@ -418,6 +450,7 @@ class ConversionEngine:
 
         try:
             result = self.workflow.invoke(state, {"recursion_limit": 100})
+            self._merge_schema_progress(job_id, result)
             job.crawl_config = crawl_config
             new_artifacts = result.get("crawl_artifacts") or {}
             if job.crawl_artifacts and new_artifacts:
@@ -596,6 +629,7 @@ class ConversionEngine:
 
         try:
             result = self.workflow.invoke(state)
+            self._merge_schema_progress(job_id, result)
             infer_artifacts = result.get("crawl_artifacts") or job.crawl_artifacts or {}
             if job.crawl_artifacts and infer_artifacts:
                 old_assets = (job.crawl_artifacts or {}).get("assets", []) or []
@@ -667,7 +701,6 @@ class ConversionEngine:
             print(f"[Engine] Schema inference FAILED for job {job_id}: {exc}")
             return job.to_dict()
 
-    @traced("engine.get_job")
     def get_job(self, job_id: str) -> dict[str, Any]:
         job = self.store.get_job(job_id)
         if job is None:

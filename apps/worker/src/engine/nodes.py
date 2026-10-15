@@ -2330,7 +2330,7 @@ def _heuristic_schema_from_html(html_pages: list[str]) -> SchemaProposal:
     )
 
 
-def infer_schema_node(state: ConversionState, llm: PromptLLM | None = None) -> ConversionState:
+def infer_schema_node(state: ConversionState, llm: PromptLLM | None = None, progress=None) -> ConversionState:
     html_pages = state.get("crawled_pages", []) or state.get("html_pages", [])
     if not html_pages:
         return {
@@ -2366,7 +2366,7 @@ def infer_schema_node(state: ConversionState, llm: PromptLLM | None = None) -> C
             llm_response = infer_all_pages(html_pages, llm, lambda pages: _build_llm_schema_prompt(
                 pages, extracted_blocks, schema_rejection_feedback=state.get("schema_rejection_feedback"),
                 use_extracted_blocks=use_extracted_blocks, max_evidence_slices=max_evidence_slices),
-                _extract_json_payload)
+                _extract_json_payload, on_progress=progress)
             print(f"DEBUG: LLM Response Length: {len(llm_response)}")
             parsed = _extract_json_payload(llm_response)
             if parsed is not None:

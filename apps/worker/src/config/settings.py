@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     
     # LLM
     KIMI_API_KEY: str = ""
-    KIMI_MODEL: str = "moonshot-v1-128k"
+    KIMI_MODEL: str = "kimi-k2.6"
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_MODEL: str = "deepseek-chat"
     OPENAI_API_KEY: str = ""
@@ -20,13 +20,14 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.6-flash"
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
     OPEN_SOURCE_API_KEY: str = ""
     OPEN_SOURCE_MODEL: str = ""
     OPEN_SOURCE_BASE_URL: str = ""
     ANTHROPIC_API_KEY: str = ""
     DEFAULT_LLM_MODEL: str = "gpt-4o-mini"
     LLM_MAX_OUTPUT_TOKENS: int = 8192
+    LLM_REQUEST_TIMEOUT_SECONDS: float = 60
     
     # Database
     DATABASE_URL: str = ""
@@ -194,6 +195,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_quality_and_runtime_settings(self) -> "Settings":
+        if not 5 <= self.LLM_REQUEST_TIMEOUT_SECONDS <= 300:
+            raise ValueError("LLM_REQUEST_TIMEOUT_SECONDS must be between 5 and 300")
         profile = str(self.QUALITY_PROFILE or "").strip().lower()
         if profile not in self._quality_profile_matrix():
             raise ValueError("QUALITY_PROFILE must be one of: dev, staging, prod")
